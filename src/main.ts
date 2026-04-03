@@ -52,10 +52,10 @@ function onSensorSample(s: SensorSample) {
 
 let lastExtract = 0;
 function maybeExtractAndSend(now: number) {
+  selfFeatures = extractFeatures();
+
   if (now - lastExtract < 50) return;
   lastExtract = now;
-
-  selfFeatures = extractFeatures();
 
   if (connected) {
     sendFeatures(featuresToArray(selfFeatures));
@@ -126,7 +126,7 @@ function loop(time: number) {
     peerSimplex.particles[0].pinY = targetY;
 
     driveSimplex(peerSimplex, peerFeatures, 0, 0, dt);
-    applyFusion(selfSimplex, peerSimplex, similarity);
+    applyFusion(selfSimplex, peerSimplex, similarity, dt);
   }
 
   // Render

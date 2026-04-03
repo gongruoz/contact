@@ -60,7 +60,7 @@ export function createSimplex(cx: number, cy: number): Simplex {
   const core = makeParticle(cx, cy, 0);
   core.pinX = cx;
   core.pinY = cy;
-  core.pinStrength = 0.06;
+  core.pinStrength = 0.02;
   particles.push(core);
 
   for (let a = 0; a < ARM_COUNT; a++) {
@@ -118,10 +118,13 @@ export function createSimplex(cx: number, cy: number): Simplex {
 
 // --------------- Physics step ---------------
 
-const DAMPING_BASE = 0.96;
+const DAMPING_BASE = 0.97;
 const GRAVITY = 0;
+/** Verlet uses a*dt^2; dt~0.016 makes dt^2 tiny — scale so forces read in screen px */
+const ACC_SCALE = 22000;
 
 function integrateParticles(s: Simplex, dt: number) {
+  const acc = dt * dt * ACC_SCALE;
   for (const p of s.particles) {
     const vx = (p.x - p.px) * DAMPING_BASE;
     const vy = (p.y - p.py) * DAMPING_BASE;
@@ -129,10 +132,10 @@ function integrateParticles(s: Simplex, dt: number) {
     p.px = p.x;
     p.py = p.y;
 
-    p.x += vx + p.fx * dt * dt;
-    p.y += vy + (p.fy + GRAVITY) * dt * dt;
+    p.x += vx + p.fx * acc;
+    p.y += vy + (p.fy + GRAVITY) * acc;
 
-    // Pin spring
+    // Pin spring (soft anchor — keep low so motion dominates)
     if (p.pinStrength > 0) {
       p.x += (p.pinX - p.x) * p.pinStrength;
       p.y += (p.pinY - p.y) * p.pinStrength;
@@ -191,17 +194,17 @@ export function driveSimplex(
   s.phase += speed * dt;
   const osc = Math.sin(s.phase);
 
-  // Force magnitude
-  const forceMag = s._amp * 420;
+  // Force magnitude (pre-ACC_SCALE — keep in ~0.5–8 range)
+  const forceMag = s._amp * 2.5;
 
   // Oscillating directional force on core
   const core = s.particles[0];
-  core.fx += Math.cos(dirAngle) * osc * forceMag * 0.5;
-  core.fy += Math.sin(dirAngle) * osc * forceMag * 0.5;
+  core.fx += Math.cos(dirAngle) * osc * forceMag;
+  core.fy += Math.sin(dirAngle) * osc * forceMag;
 
-  // Direct raw sensor force on core for instant responsiveness
-  core.fx += rawAx * 280;
-  core.fy += rawAy * 280;
+  // Direct raw sensor — main driver for mouse/phone (tanh ~ ±1)
+  core.fx += rawAx * 6;
+  core.fy += rawAy * 6;
 
   // Propagate attenuated force to arm roots and deeper particles
   for (let i = 1; i < s.particles.length; i++) {
@@ -210,12 +213,12 @@ export function driveSimplex(
     // Phase-shifted oscillation per depth for wave-like propagation
     const phaseShift = p.depth * 0.4;
     const localOsc = Math.sin(s.phase - phaseShift);
-    p.fx += Math.cos(dirAngle) * localOsc * forceMag * depthFalloff * 0.3;
-    p.fy += Math.sin(dirAngle) * localOsc * forceMag * depthFalloff * 0.3;
+    p.fx += Math.cos(dirAngle) * localOsc * forceMag * depthFalloff * 0.35;
+    p.fy += Math.sin(dirAngle) * localOsc * forceMag * depthFalloff * 0.35;
   }
 
   // Idle breath: ambient micro-motion so figure never looks dead
-  const breathAmp = 8 * (1 - s._amp * 0.8);
+  const breathAmp = 0.35 * (1 - s._amp * 0.85);
   for (let i = 1; i < s.particles.length; i++) {
     const p = s.particles[i];
     const angle = Math.atan2(p.y - s.cy, p.x - s.cx);
@@ -272,13 +275,12 @@ export function drawSimplex(
 
 // --------------- Fusion ---------------
 
-export function applyFusion(a: Simplex, b: Simplex, similarity: number) {
+export function applyFusion(a: Simplex, b: Simplex, similarity: number, dt: number) {
   if (similarity < 0.3) return;
 
   const strength = (similarity - 0.3) / 0.7;
-  const maxForce = 12 * strength;
+  const maxForce = 0.08 * strength;
 
-  // Attract tip particles (highest depth) between the two figures
   const tipsA = a.particles.filter((p) => p.depth >= ARM_SEGMENTS);
   const tipsB = b.particles.filter((p) => p.depth >= ARM_SEGMENTS);
 
@@ -301,6 +303,12 @@ export function applyFusion(a: Simplex, b: Simplex, similarity: number) {
     bestTb.fx -= (dx / dist) * f * 0.3;
     bestTb.fy -= (dy / dist) * f * 0.3;
   }
+
+  integrateParticles(a, dt);
+  integrateParticles(b, dt);
+  const it = a._smooth > 0.5 ? 4 : 3;
+  solveConstraints(a, it);
+  solveConstraints(b, it);
 }
 
 // --------------- Fusion edge rendering ---------------
