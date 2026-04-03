@@ -9,10 +9,31 @@ export type SensorCallback = (s: SensorSample) => void;
 
 let cb: SensorCallback | null = null;
 
+/** m/s² — compress to ~[-1,1] so phone matches mouse tanh domain */
+const PHONE_ACCEL_REF = 2.2;
+
 function onDeviceMotion(e: DeviceMotionEvent) {
+  let ax = 0;
+  let ay = 0;
+  let az = 0;
   const a = e.acceleration;
-  if (!a || a.x == null || a.y == null || a.z == null) return;
-  cb?.({ ax: a.x, ay: a.y, az: a.z, t: performance.now() });
+  if (a && a.x != null && a.y != null && a.z != null) {
+    ax = a.x;
+    ay = a.y;
+    az = a.z;
+  } else {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null || g.y == null || g.z == null) return;
+    ax = g.x;
+    ay = g.y;
+    az = g.z;
+  }
+  cb?.({
+    ax: Math.tanh(ax / PHONE_ACCEL_REF),
+    ay: Math.tanh(ay / PHONE_ACCEL_REF),
+    az: Math.tanh(az / PHONE_ACCEL_REF),
+    t: performance.now(),
+  });
 }
 
 let lastMx = -1;
@@ -47,11 +68,14 @@ function onMouseMove(e: MouseEvent) {
   smoothVx += alpha * (rawVx - smoothVx);
   smoothVy += alpha * (rawVy - smoothVy);
 
-  // Emit smoothed velocity as the "acceleration" signal.
-  // Mouse velocity is the conceptual equivalent of phone acceleration
-  // (how fast you're swinging it).
-  const scale = 1 / 800;
-  cb?.({ ax: smoothVx * scale, ay: smoothVy * scale, az: 0, t: now });
+  // Same ~[-1,1] range as phone (tanh) so feature extraction is cross-device comparable
+  const V_REF = 2200;
+  cb?.({
+    ax: Math.tanh(smoothVx / V_REF),
+    ay: Math.tanh(smoothVy / V_REF),
+    az: 0,
+    t: now,
+  });
 }
 
 export function isMobile(): boolean {

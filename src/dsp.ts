@@ -48,6 +48,18 @@ function mean(buf: Float32Array): number {
   return sum / n;
 }
 
+function maxMagInBuffer(): number {
+  if (count === 0) return 0;
+  let m = 0;
+  const n = Math.min(count, BUFFER_SIZE);
+  for (let i = 0; i < n; i++) {
+    const idx = (head - n + i + BUFFER_SIZE) % BUFFER_SIZE;
+    const v = magBuf[idx];
+    if (v > m) m = v;
+  }
+  return m;
+}
+
 /**
  * Simple dominant-frequency estimation via zero-crossing rate
  * on the de-meaned magnitude signal. Avoids full FFT for v1.
@@ -74,12 +86,16 @@ function dominantFrequency(): number {
   return freqHz;
 }
 
-const AMP_MAX = 4.0;
 const FREQ_MAX = 12;
-const JERK_MAX = 3.0;
+/** jerk on tanh-normalized magnitude (same units mouse vs phone) */
+const JERK_MAX = 0.35;
 
 export function extractFeatures(): Features {
-  const amp = Math.min(rms(magBuf) / AMP_MAX, 1);
+  const magRms = rms(magBuf);
+  const peak = maxMagInBuffer();
+  // Relative intensity: comparable across mouse (velocity→tanh) vs phone (accel→tanh)
+  const amp =
+    peak < 1e-4 ? 0 : Math.min(magRms / (peak + 0.04), 1);
 
   const freqHz = dominantFrequency();
   const freq = Math.min(freqHz / FREQ_MAX, 1);
@@ -87,9 +103,9 @@ export function extractFeatures(): Features {
   const ex = mean(axBuf);
   const ey = mean(ayBuf);
   const ez = mean(azBuf);
-  const total = ex + ey + ez + 1e-8;
-  const hue = Math.atan2(ey / total - 0.333, ex / total - 0.333) / (2 * Math.PI) + 0.5;
-  const axis = ((hue % 1) + 1) % 1;
+  // Blend Z into the 2D angle so phone-only depth shake is not stuck at atan2(0,0); mouse has ez≈0
+  const axisRaw = Math.atan2(ey + 0.35 * ez + 1e-12, ex + 0.35 * ez + 1e-12) / (Math.PI / 2);
+  const axis = Math.min(Math.max(axisRaw, 0), 1);
 
   const jerkRms = rms(jerkBuf);
   const smoothness = Math.min(jerkRms / JERK_MAX, 1);

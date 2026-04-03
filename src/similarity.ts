@@ -7,8 +7,7 @@ export function computeSimilarity(a: Features, b: Features): number {
   const dFreq = a.frequency - b.frequency;
   const dSmooth = a.smoothness - b.smoothness;
 
-  let dAxis = Math.abs(a.axis - b.axis);
-  if (dAxis > 0.5) dAxis = 1 - dAxis;
+  const dAxis = Math.abs(a.axis - b.axis);
 
   const dist = Math.sqrt(dAmp * dAmp + dFreq * dFreq + dAxis * dAxis * 4 + dSmooth * dSmooth);
   const maxDist = 2.0;

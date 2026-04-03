@@ -30,8 +30,21 @@ function maybeExtractAndSend(now: number) {
   }
 }
 
+function normalizePeerPayload(data: unknown): number[] | null {
+  if (Array.isArray(data) && data.length >= 4) {
+    return data.map((x) => Number(x));
+  }
+  if (data && typeof data === "object") {
+    const v = Object.values(data as Record<string, unknown>).map((x) => Number(x));
+    if (v.length >= 4 && v.every((n) => !Number.isNaN(n))) return v;
+  }
+  return null;
+}
+
 onPeerData((data) => {
-  peerFeatures = arrayToFeatures(data);
+  const arr = normalizePeerPayload(data);
+  if (!arr) return;
+  peerFeatures = arrayToFeatures(arr);
   setPeerFeatures(peerFeatures);
 });
 
@@ -41,6 +54,9 @@ onPeerConnected(() => {
   resetSimilarity();
   showConnected();
   setHint("");
+  selfFeatures = extractFeatures();
+  setSelfFeatures(selfFeatures);
+  sendFeatures(featuresToArray(selfFeatures));
 });
 
 onPeerDisconnected(() => {
@@ -52,6 +68,8 @@ onPeerDisconnected(() => {
 });
 
 // Distance-to-visual mapping
+// Peer blob must stay visible at low similarity so you can observe their motion and imitate.
+// Similarity then pulls them toward the center and strengthens fusion in the shader.
 function updateProximity() {
   if (!connected || !peerFeatures) {
     setPeerVisuals(0, 0.5, 0.5, 0);
@@ -60,32 +78,13 @@ function updateProximity() {
 
   const sim = computeSimilarity(selfFeatures, peerFeatures);
 
-  let opacity: number;
-  let cx: number;
-  let cy: number;
+  const minOpacity = 0.42;
+  const opacity = minOpacity + (1 - minOpacity) * sim;
 
-  if (sim < 0.15) {
-    opacity = 0;
-    cx = 0.5;
-    cy = -0.2;
-  } else if (sim < 0.5) {
-    // Emerging from edge, moving toward center
-    const t = (sim - 0.15) / 0.35;
-    opacity = t * 0.6;
-    cx = 0.5;
-    cy = -0.1 + t * 0.4;
-  } else if (sim < 0.75) {
-    // Approaching, both visible
-    const t = (sim - 0.5) / 0.25;
-    opacity = 0.6 + t * 0.4;
-    cx = 0.5;
-    cy = 0.3 + t * 0.15;
-  } else {
-    // Close/fusion
-    opacity = 1;
-    cx = 0.5;
-    cy = 0.45 + (sim - 0.75) * 0.2;
-  }
+  const cx = 0.5;
+  const cyTop = 0.1;
+  const cyNear = 0.44;
+  const cy = cyTop + sim * (cyNear - cyTop);
 
   setPeerVisuals(opacity, cx, cy, sim);
 }
