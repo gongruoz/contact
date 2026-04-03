@@ -4,5 +4,4 @@ export default defineConfig({
   root: ".",
   build: { outDir: "dist" },
   server: { host: true },
-  assetsInclude: ["**/*.frag", "**/*.vert"],
 });

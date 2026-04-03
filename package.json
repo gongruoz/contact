@@ -16,7 +16,6 @@
     "vite": "^8.0.3"
   },
   "dependencies": {
-    "tinypeer": "^0.2.0",
-    "twgl.js": "^7.0.0"
+    "tinypeer": "^0.2.0"
   }
 }

@@ -1,29 +1,61 @@
 import { startSensor, isMobile, requestMotionPermission, type SensorSample } from "./sensor";
 import { pushSample, extractFeatures, featuresToArray, arrayToFeatures, type Features } from "./dsp";
-import { initRenderer, setSelfFeatures, setPeerFeatures, setPeerVisuals, renderFrame } from "./render";
 import { computeSimilarity, resetSimilarity } from "./similarity";
-import { createRoom, joinRoom, sendFeatures, onPeerData, onPeerConnected, onPeerDisconnected, isConnected } from "./peer";
+import { createRoom, joinRoom, sendFeatures, onPeerData, onPeerConnected, onPeerDisconnected } from "./peer";
 import { setHint, showRoomCode, showConnected, showDisconnected, onCreateRoom, onJoinRoom, setStatus } from "./ui";
+import { createSimplex, driveSimplex, drawSimplex, applyFusion, drawFusionEdges, type Simplex } from "./creature";
 
 const canvas = document.getElementById("gl") as HTMLCanvasElement;
-initRenderer(canvas);
+const ctx = canvas.getContext("2d")!;
 
 let selfFeatures: Features = { amplitude: 0, frequency: 0, axis: 0, smoothness: 0 };
 let peerFeatures: Features | null = null;
 let connected = false;
 
-function onSensorSample(s: SensorSample) {
-  pushSample(s);
+let latestRawAx = 0;
+let latestRawAy = 0;
+
+let selfSimplex: Simplex;
+let peerSimplex: Simplex;
+
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-// Extract features at ~20Hz and send to peer
+function initSimplexes() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  selfSimplex = createSimplex(w / 2, h / 2);
+  peerSimplex = createSimplex(w / 2, h * 0.15);
+}
+
+resizeCanvas();
+initSimplexes();
+window.addEventListener("resize", () => {
+  resizeCanvas();
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  selfSimplex.cx = w / 2;
+  selfSimplex.cy = h / 2;
+  selfSimplex.particles[0].pinX = w / 2;
+  selfSimplex.particles[0].pinY = h / 2;
+});
+
+function onSensorSample(s: SensorSample) {
+  pushSample(s);
+  latestRawAx = s.ax;
+  latestRawAy = s.ay;
+}
+
 let lastExtract = 0;
 function maybeExtractAndSend(now: number) {
   if (now - lastExtract < 50) return;
   lastExtract = now;
 
   selfFeatures = extractFeatures();
-  setSelfFeatures(selfFeatures);
 
   if (connected) {
     sendFeatures(featuresToArray(selfFeatures));
@@ -45,7 +77,6 @@ onPeerData((data) => {
   const arr = normalizePeerPayload(data);
   if (!arr) return;
   peerFeatures = arrayToFeatures(arr);
-  setPeerFeatures(peerFeatures);
 });
 
 onPeerConnected(() => {
@@ -55,7 +86,6 @@ onPeerConnected(() => {
   showConnected();
   setHint("");
   selfFeatures = extractFeatures();
-  setSelfFeatures(selfFeatures);
   sendFeatures(featuresToArray(selfFeatures));
 });
 
@@ -63,45 +93,58 @@ onPeerDisconnected(() => {
   connected = false;
   peerFeatures = null;
   resetSimilarity();
-  setPeerVisuals(0, 0.5, 0.5, 0);
   showDisconnected();
 });
 
-// Distance-to-visual mapping
-// Peer blob must stay visible at low similarity so you can observe their motion and imitate.
-// Similarity then pulls them toward the center and strengthens fusion in the shader.
-function updateProximity() {
-  if (!connected || !peerFeatures) {
-    setPeerVisuals(0, 0.5, 0.5, 0);
-    return;
+let lastTime = 0;
+
+function loop(time: number) {
+  const dt = lastTime ? Math.min((time - lastTime) / 1000, 0.05) : 0.016;
+  lastTime = time;
+
+  maybeExtractAndSend(time);
+
+  // Drive self simplex
+  driveSimplex(selfSimplex, selfFeatures, latestRawAx, latestRawAy, dt);
+
+  // Drive peer simplex
+  let similarity = 0;
+  let peerOpacity = 0;
+  if (connected && peerFeatures) {
+    similarity = computeSimilarity(selfFeatures, peerFeatures);
+    peerOpacity = 0.3 + similarity * 0.7;
+
+    // Position peer simplex based on similarity
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const topY = h * 0.18;
+    const nearY = h * 0.42;
+    const targetY = topY + similarity * (nearY - topY);
+    peerSimplex.cx = w / 2;
+    peerSimplex.cy = targetY;
+    peerSimplex.particles[0].pinX = w / 2;
+    peerSimplex.particles[0].pinY = targetY;
+
+    driveSimplex(peerSimplex, peerFeatures, 0, 0, dt);
+    applyFusion(selfSimplex, peerSimplex, similarity);
   }
 
-  const sim = computeSimilarity(selfFeatures, peerFeatures);
+  // Render
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
-  const minOpacity = 0.42;
-  const opacity = minOpacity + (1 - minOpacity) * sim;
+  drawSimplex(ctx, selfSimplex, 1);
 
-  const cx = 0.5;
-  const cyTop = 0.1;
-  const cyNear = 0.44;
-  const cy = cyTop + sim * (cyNear - cyTop);
+  if (connected && peerFeatures) {
+    drawSimplex(ctx, peerSimplex, peerOpacity);
+    drawFusionEdges(ctx, selfSimplex, peerSimplex, similarity);
+  }
 
-  setPeerVisuals(opacity, cx, cy, sim);
-}
-
-// Render loop
-function loop(time: number) {
-  maybeExtractAndSend(time);
-  updateProximity();
-  renderFrame(time);
   requestAnimationFrame(loop);
 }
 
-// Boot
 async function init() {
   if (isMobile()) {
     setHint("tap to start, then move your phone");
-
     const startOnTap = async () => {
       document.removeEventListener("click", startOnTap);
       const ok = await requestMotionPermission();
@@ -123,7 +166,7 @@ async function init() {
     try {
       const code = await createRoom();
       showRoomCode(code);
-    } catch (e) {
+    } catch {
       setStatus("failed to create room");
     }
   });
@@ -132,7 +175,7 @@ async function init() {
     setStatus("joining...");
     try {
       await joinRoom(code);
-    } catch (e) {
+    } catch {
       setStatus("failed to join");
     }
   });
