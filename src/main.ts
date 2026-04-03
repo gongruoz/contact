@@ -3,7 +3,7 @@ import { pushSample, extractFeatures, featuresToArray, arrayToFeatures, type Fea
 import { computeSimilarity, resetSimilarity } from "./similarity";
 import { createRoom, joinRoom, sendFeatures, onPeerData, onPeerConnected, onPeerDisconnected } from "./peer";
 import { setHint, showRoomCode, showConnected, showDisconnected, onCreateRoom, onJoinRoom, setStatus } from "./ui";
-import { createSimplex, driveSimplex, drawSimplex, applyFusion, drawFusionEdges, type Simplex } from "./creature";
+import { createSimplex, driveSimplex, drawSimplex, applyFusion, drawFusionEdges, wrap, type Simplex } from "./creature";
 
 const canvas = document.getElementById("gl") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
@@ -25,24 +25,51 @@ function resizeCanvas() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
+function syncTorusDims(s: Simplex, w: number, h: number) {
+  s.tw = w;
+  s.th = h;
+  for (const p of s.particles) {
+    p.x = wrap(p.x, w);
+    p.y = wrap(p.y, h);
+    p.px = wrap(p.px, w);
+    p.py = wrap(p.py, h);
+  }
+}
+
 function initSimplexes() {
   const w = window.innerWidth;
   const h = window.innerHeight;
-  selfSimplex = createSimplex(w / 2, h / 2);
-  peerSimplex = createSimplex(w / 2, h * 0.15);
+  selfSimplex = createSimplex(w / 2, h / 2, w, h);
+  peerSimplex = createSimplex(w / 2, h / 2, w, h);
 }
 
 resizeCanvas();
 initSimplexes();
+
 window.addEventListener("resize", () => {
   resizeCanvas();
   const w = window.innerWidth;
   const h = window.innerHeight;
-  selfSimplex.cx = w / 2;
-  selfSimplex.cy = h / 2;
-  selfSimplex.particles[0].pinX = w / 2;
-  selfSimplex.particles[0].pinY = h / 2;
+  syncTorusDims(selfSimplex, w, h);
+  syncTorusDims(peerSimplex, w, h);
 });
+
+function layoutPins(sim: number) {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const maxSep = Math.min(w, h) * 0.34;
+  const half = (1 - sim) * maxSep * 0.5;
+
+  selfSimplex.cx = w / 2 - half;
+  selfSimplex.cy = h / 2;
+  selfSimplex.particles[0].pinX = wrap(w / 2 - half, w);
+  selfSimplex.particles[0].pinY = wrap(h / 2, h);
+
+  peerSimplex.cx = w / 2 + half;
+  peerSimplex.cy = h / 2;
+  peerSimplex.particles[0].pinX = wrap(w / 2 + half, w);
+  peerSimplex.particles[0].pinY = wrap(h / 2, h);
+}
 
 function onSensorSample(s: SensorSample) {
   pushSample(s);
@@ -104,38 +131,34 @@ function loop(time: number) {
 
   maybeExtractAndSend(time);
 
-  // Drive self simplex
-  driveSimplex(selfSimplex, selfFeatures, latestRawAx, latestRawAy, dt);
-
-  // Drive peer simplex
   let similarity = 0;
-  let peerOpacity = 0;
   if (connected && peerFeatures) {
     similarity = computeSimilarity(selfFeatures, peerFeatures);
-    peerOpacity = 0.3 + similarity * 0.7;
-
-    // Position peer simplex based on similarity
+    layoutPins(similarity);
+  } else {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const topY = h * 0.18;
-    const nearY = h * 0.42;
-    const targetY = topY + similarity * (nearY - topY);
-    peerSimplex.cx = w / 2;
-    peerSimplex.cy = targetY;
-    peerSimplex.particles[0].pinX = w / 2;
-    peerSimplex.particles[0].pinY = targetY;
+    selfSimplex.cx = w / 2;
+    selfSimplex.cy = h / 2;
+    selfSimplex.particles[0].pinX = wrap(w / 2, w);
+    selfSimplex.particles[0].pinY = wrap(h / 2, h);
+  }
 
+  driveSimplex(selfSimplex, selfFeatures, latestRawAx, latestRawAy, dt);
+
+  if (connected && peerFeatures) {
     driveSimplex(peerSimplex, peerFeatures, 0, 0, dt);
     applyFusion(selfSimplex, peerSimplex, similarity, dt);
   }
 
-  // Render
-  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  ctx.clearRect(0, 0, w, h);
 
   drawSimplex(ctx, selfSimplex, 1);
 
   if (connected && peerFeatures) {
-    drawSimplex(ctx, peerSimplex, peerOpacity);
+    drawSimplex(ctx, peerSimplex, 1);
     drawFusionEdges(ctx, selfSimplex, peerSimplex, similarity);
   }
 

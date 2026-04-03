@@ -1,5 +1,22 @@
 import type { Features } from "./dsp";
 
+// --------------- Torus helpers (2D periodic boundary) ---------------
+
+export function wrap(x: number, L: number): number {
+  return ((x % L) + L) % L;
+}
+
+/** Shortest vector from a toward b on a torus of size (tw, th) */
+function torusDelta(ax: number, ay: number, bx: number, by: number, tw: number, th: number) {
+  let dx = bx - ax;
+  let dy = by - ay;
+  if (dx > tw / 2) dx -= tw;
+  else if (dx < -tw / 2) dx += tw;
+  if (dy > th / 2) dy -= th;
+  else if (dy < -th / 2) dy += th;
+  return { dx, dy };
+}
+
 // --------------- Verlet particle system ---------------
 
 interface Particle {
@@ -11,8 +28,8 @@ interface Particle {
   fy: number;
   pinX: number;
   pinY: number;
-  pinStrength: number; // 0 = free, 1 = fully pinned
-  depth: number; // 0 = core, increases outward
+  pinStrength: number;
+  depth: number;
 }
 
 interface Constraint {
@@ -27,8 +44,9 @@ export interface Simplex {
   constraints: Constraint[];
   cx: number;
   cy: number;
+  tw: number;
+  th: number;
   phase: number;
-  // smoothed drive params
   _amp: number;
   _freq: number;
   _axis: number;
@@ -44,86 +62,56 @@ function makeParticle(x: number, y: number, depth: number): Particle {
   };
 }
 
-// --------------- Topology builder ---------------
+// --------------- Closed hexagon simplex (core + 6 ring vertices) ---------------
 
-const ARM_COUNT = 5;
-const ARM_SEGMENTS = 4;
-const BRANCH_SEGMENTS = 2;
-const BRANCH_FORK = 2;
-const REST_LEN = 28;
+const RING_N = 6;
+/** Circumradius — larger figure */
+const RING_R = 118;
+/** Edge length of regular hexagon with circumradius R */
+const EDGE_REST = 2 * RING_R * Math.sin(Math.PI / RING_N);
 
-export function createSimplex(cx: number, cy: number): Simplex {
+export function createSimplex(cx: number, cy: number, tw: number, th: number): Simplex {
   const particles: Particle[] = [];
   const constraints: Constraint[] = [];
 
-  // Core
-  const core = makeParticle(cx, cy, 0);
-  core.pinX = cx;
-  core.pinY = cy;
-  core.pinStrength = 0.02;
+  const core = makeParticle(wrap(cx, tw), wrap(cy, th), 0);
+  core.pinX = wrap(cx, tw);
+  core.pinY = wrap(cy, th);
+  core.pinStrength = 0.018;
   particles.push(core);
 
-  for (let a = 0; a < ARM_COUNT; a++) {
-    const angle = (a / ARM_COUNT) * Math.PI * 2 - Math.PI / 2;
-    let prevIdx = 0;
-
-    for (let s = 1; s <= ARM_SEGMENTS; s++) {
-      const r = REST_LEN * s;
-      const px = cx + Math.cos(angle) * r + (Math.random() - 0.5) * 4;
-      const py = cy + Math.sin(angle) * r + (Math.random() - 0.5) * 4;
-      const p = makeParticle(px, py, s);
-      const idx = particles.length;
-      particles.push(p);
-      constraints.push({ a: prevIdx, b: idx, rest: REST_LEN, stiffness: 0.4 });
-      prevIdx = idx;
-    }
-
-    // Branch forks from arm tip
-    const tipIdx = prevIdx;
-    for (let f = 0; f < BRANCH_FORK; f++) {
-      const forkAngle = angle + ((f - (BRANCH_FORK - 1) / 2) * 0.7);
-      let bPrev = tipIdx;
-      for (let bs = 1; bs <= BRANCH_SEGMENTS; bs++) {
-        const depth = ARM_SEGMENTS + bs;
-        const r = REST_LEN * (ARM_SEGMENTS + bs);
-        const bx = cx + Math.cos(forkAngle) * r + (Math.random() - 0.5) * 4;
-        const by = cy + Math.sin(forkAngle) * r + (Math.random() - 0.5) * 4;
-        const bp = makeParticle(bx, by, depth);
-        const bIdx = particles.length;
-        particles.push(bp);
-        constraints.push({ a: bPrev, b: bIdx, rest: REST_LEN * 0.85, stiffness: 0.3 });
-        bPrev = bIdx;
-      }
-    }
+  for (let i = 0; i < RING_N; i++) {
+    const ang = (i / RING_N) * Math.PI * 2 - Math.PI / 2;
+    const px = wrap(cx + Math.cos(ang) * RING_R, tw);
+    const py = wrap(cy + Math.sin(ang) * RING_R, th);
+    const p = makeParticle(px, py, 1);
+    const idx = particles.length;
+    particles.push(p);
+    constraints.push({ a: 0, b: idx, rest: RING_R, stiffness: 0.42 });
   }
 
-  // Cross-brace: connect each arm root to adjacent arm roots for structural stability
-  for (let a = 0; a < ARM_COUNT; a++) {
-    const rootA = 1 + a * (ARM_SEGMENTS + BRANCH_FORK * BRANCH_SEGMENTS);
-    const rootB = 1 + ((a + 1) % ARM_COUNT) * (ARM_SEGMENTS + BRANCH_FORK * BRANCH_SEGMENTS);
-    if (rootA < particles.length && rootB < particles.length) {
-      const dx = particles[rootA].x - particles[rootB].x;
-      const dy = particles[rootA].y - particles[rootB].y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      constraints.push({ a: rootA, b: rootB, rest: dist, stiffness: 0.15 });
-    }
+  for (let i = 0; i < RING_N; i++) {
+    const a = 1 + i;
+    const b = 1 + ((i + 1) % RING_N);
+    constraints.push({ a, b, rest: EDGE_REST, stiffness: 0.42 });
   }
 
   return {
-    particles, constraints, cx, cy,
+    particles, constraints, cx, cy, tw, th,
     phase: Math.random() * Math.PI * 2,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
   };
 }
 
-// --------------- Physics step ---------------
+// --------------- Physics ---------------
 
-const DAMPING_BASE = 0.97;
+const DAMPING_BASE = 0.985;
 const GRAVITY = 0;
-/** Verlet uses a*dt^2; dt~0.016 makes dt^2 tiny — scale so forces read in screen px */
-const ACC_SCALE = 22000;
+/** Lower = calmer motion */
+const ACC_SCALE = 7500;
 
 function integrateParticles(s: Simplex, dt: number) {
+  const { tw, th } = s;
   const acc = dt * dt * ACC_SCALE;
   for (const p of s.particles) {
     const vx = (p.x - p.px) * DAMPING_BASE;
@@ -135,11 +123,14 @@ function integrateParticles(s: Simplex, dt: number) {
     p.x += vx + p.fx * acc;
     p.y += vy + (p.fy + GRAVITY) * acc;
 
-    // Pin spring (soft anchor — keep low so motion dominates)
     if (p.pinStrength > 0) {
-      p.x += (p.pinX - p.x) * p.pinStrength;
-      p.y += (p.pinY - p.y) * p.pinStrength;
+      const { dx, dy } = torusDelta(p.x, p.y, p.pinX, p.pinY, tw, th);
+      p.x += dx * p.pinStrength;
+      p.y += dy * p.pinStrength;
     }
+
+    p.x = wrap(p.x, tw);
+    p.y = wrap(p.y, th);
 
     p.fx = 0;
     p.fy = 0;
@@ -147,18 +138,24 @@ function integrateParticles(s: Simplex, dt: number) {
 }
 
 function solveConstraints(s: Simplex, iterations: number) {
+  const { tw, th } = s;
   for (let iter = 0; iter < iterations; iter++) {
     for (const c of s.constraints) {
       const pa = s.particles[c.a];
       const pb = s.particles[c.b];
-      const dx = pb.x - pa.x;
-      const dy = pb.y - pa.y;
+      const { dx, dy } = torusDelta(pa.x, pa.y, pb.x, pb.y, tw, th);
       const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
       const diff = (dist - c.rest) / dist;
       const moveX = dx * diff * c.stiffness * 0.5;
       const moveY = dy * diff * c.stiffness * 0.5;
-      if (pa.pinStrength < 1) { pa.x += moveX; pa.y += moveY; }
-      if (pb.pinStrength < 1) { pb.x -= moveX; pb.y -= moveY; }
+      if (pa.pinStrength < 1) {
+        pa.x = wrap(pa.x + moveX, tw);
+        pa.y = wrap(pa.y + moveY, th);
+      }
+      if (pb.pinStrength < 1) {
+        pb.x = wrap(pb.x - moveX, tw);
+        pb.y = wrap(pb.y - moveY, th);
+      }
     }
   }
 }
@@ -178,62 +175,67 @@ export function driveSimplex(
   s._axis += (features.axis - s._axis) * lerpRate;
   s._smooth += (features.smoothness - s._smooth) * lerpRate;
 
-  // Smoothness --> damping and stiffness
-  // smooth (low jerk) = low stiffness, high damping --> fluid
-  // jerky (high jerk) = high stiffness, low damping --> snappy
-  const stiffMul = 0.25 + s._smooth * 0.55;
+  const stiffMul = 0.28 + s._smooth * 0.5;
   for (const c of s.constraints) {
     c.stiffness = stiffMul;
   }
 
-  // Direction angle from axis feature
-  const dirAngle = s._axis * Math.PI; // 0..PI maps to horizontal..vertical
-
-  // Oscillation
-  const speed = 1.0 + s._freq * 8.0;
+  const dirAngle = s._axis * Math.PI;
+  const speed = 0.6 + s._freq * 5.0;
   s.phase += speed * dt;
   const osc = Math.sin(s.phase);
 
-  // Force magnitude (pre-ACC_SCALE — keep in ~0.5–8 range)
-  const forceMag = s._amp * 2.5;
-
-  // Oscillating directional force on core
+  const forceMag = s._amp * 1.1;
   const core = s.particles[0];
   core.fx += Math.cos(dirAngle) * osc * forceMag;
   core.fy += Math.sin(dirAngle) * osc * forceMag;
 
-  // Direct raw sensor — main driver for mouse/phone (tanh ~ ±1)
-  core.fx += rawAx * 6;
-  core.fy += rawAy * 6;
+  core.fx += rawAx * 2.4;
+  core.fy += rawAy * 2.4;
 
-  // Propagate attenuated force to arm roots and deeper particles
   for (let i = 1; i < s.particles.length; i++) {
     const p = s.particles[i];
-    const depthFalloff = 1 / (1 + p.depth * 0.6);
-    // Phase-shifted oscillation per depth for wave-like propagation
-    const phaseShift = p.depth * 0.4;
+    const depthFalloff = 1 / (1 + p.depth * 0.5);
+    const phaseShift = p.depth * 0.35;
     const localOsc = Math.sin(s.phase - phaseShift);
-    p.fx += Math.cos(dirAngle) * localOsc * forceMag * depthFalloff * 0.35;
-    p.fy += Math.sin(dirAngle) * localOsc * forceMag * depthFalloff * 0.35;
+    p.fx += Math.cos(dirAngle) * localOsc * forceMag * depthFalloff * 0.28;
+    p.fy += Math.sin(dirAngle) * localOsc * forceMag * depthFalloff * 0.28;
   }
 
-  // Idle breath: ambient micro-motion so figure never looks dead
-  const breathAmp = 0.35 * (1 - s._amp * 0.85);
+  const breathAmp = 0.12 * (1 - s._amp * 0.85);
   for (let i = 1; i < s.particles.length; i++) {
     const p = s.particles[i];
-    const angle = Math.atan2(p.y - s.cy, p.x - s.cx);
-    const breathPhase = s.phase * 0.15 + p.depth * 0.3;
+    const { dx, dy } = torusDelta(s.cx, s.cy, p.x, p.y, s.tw, s.th);
+    const angle = Math.atan2(dy, dx);
+    const breathPhase = s.phase * 0.12 + p.depth * 0.25;
     p.fx += Math.cos(angle) * Math.sin(breathPhase) * breathAmp;
     p.fy += Math.sin(angle) * Math.sin(breathPhase) * breathAmp;
   }
 
-  // Step physics
   integrateParticles(s, dt);
-  const constraintIter = s._smooth > 0.5 ? 4 : 3;
+  const constraintIter = s._smooth > 0.5 ? 5 : 4;
   solveConstraints(s, constraintIter);
 }
 
-// --------------- Rendering ---------------
+// --------------- Rendering (torus-aware edges) ---------------
+
+function drawTorusSegment(
+  ctx: CanvasRenderingContext2D,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  tw: number,
+  th: number,
+) {
+  const { dx, dy } = torusDelta(ax, ay, bx, by, tw, th);
+  const x1 = wrap(ax, tw);
+  const y1 = wrap(ay, th);
+  const x2 = wrap(ax + dx, tw);
+  const y2 = wrap(ay + dy, th);
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+}
 
 export function drawSimplex(
   ctx: CanvasRenderingContext2D,
@@ -244,74 +246,75 @@ export function drawSimplex(
 
   const hue = s._axis * 360;
   const sat = 15 + s._amp * 25;
+  const { tw, th } = s;
 
-  // Edges
   for (const c of s.constraints) {
     const pa = s.particles[c.a];
     const pb = s.particles[c.b];
     const avgDepth = (pa.depth + pb.depth) / 2;
-    const lw = Math.max(0.6, 2.2 - avgDepth * 0.25);
-    const edgeAlpha = opacity * (0.55 - avgDepth * 0.04);
+    const lw = Math.max(0.7, 2.4 - avgDepth * 0.35);
+    const edgeAlpha = opacity * (0.5 - avgDepth * 0.06);
 
     ctx.beginPath();
-    ctx.moveTo(pa.x, pa.y);
-    ctx.lineTo(pb.x, pb.y);
-    ctx.strokeStyle = `hsla(${hue}, ${sat}%, 28%, ${Math.max(0.05, edgeAlpha)})`;
+    drawTorusSegment(ctx, pa.x, pa.y, pb.x, pb.y, tw, th);
+    ctx.strokeStyle = `hsla(${hue}, ${sat}%, 28%, ${Math.max(0.06, edgeAlpha)})`;
     ctx.lineWidth = lw;
     ctx.stroke();
   }
 
-  // Nodes
   for (const p of s.particles) {
-    const r = p.depth === 0 ? 3.5 : Math.max(1.2, 2.8 - p.depth * 0.3);
-    const nodeAlpha = opacity * (0.7 - p.depth * 0.04);
+    const r = p.depth === 0 ? 4.2 : Math.max(1.4, 3.2 - p.depth * 0.4);
+    const nodeAlpha = opacity * (0.75 - p.depth * 0.08);
+    const sx = wrap(p.x, tw);
+    const sy = wrap(p.y, th);
 
     ctx.beginPath();
-    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = `hsla(${hue}, ${sat}%, 22%, ${Math.max(0.08, nodeAlpha)})`;
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${hue}, ${sat}%, 22%, ${Math.max(0.1, nodeAlpha)})`;
     ctx.fill();
   }
 }
 
-// --------------- Fusion ---------------
+// --------------- Fusion (ring vertices = depth 1) ---------------
 
 export function applyFusion(a: Simplex, b: Simplex, similarity: number, dt: number) {
-  if (similarity < 0.3) return;
+  if (similarity < 0.25) return;
 
-  const strength = (similarity - 0.3) / 0.7;
-  const maxForce = 0.08 * strength;
+  const strength = (similarity - 0.25) / 0.75;
+  const maxForce = 0.045 * strength;
 
-  const tipsA = a.particles.filter((p) => p.depth >= ARM_SEGMENTS);
-  const tipsB = b.particles.filter((p) => p.depth >= ARM_SEGMENTS);
+  const tipsA = a.particles.filter((p) => p.depth >= 1);
+  const tipsB = b.particles.filter((p) => p.depth >= 1);
 
   for (const ta of tipsA) {
-    let bestDist = Infinity;
+    let bestD2 = Infinity;
     let bestTb: Particle | null = null;
     for (const tb of tipsB) {
-      const dx = tb.x - ta.x;
-      const dy = tb.y - ta.y;
-      const d = dx * dx + dy * dy;
-      if (d < bestDist) { bestDist = d; bestTb = tb; }
+      const { dx, dy } = torusDelta(ta.x, ta.y, tb.x, tb.y, a.tw, a.th);
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        bestTb = tb;
+      }
     }
     if (!bestTb) continue;
-    const dist = Math.sqrt(bestDist) || 1;
-    const f = Math.min(maxForce, maxForce / (dist * 0.02 + 1));
-    const dx = bestTb.x - ta.x;
-    const dy = bestTb.y - ta.y;
-    ta.fx += (dx / dist) * f;
-    ta.fy += (dy / dist) * f;
-    bestTb.fx -= (dx / dist) * f * 0.3;
-    bestTb.fy -= (dy / dist) * f * 0.3;
+    const dist = Math.sqrt(bestD2) || 1;
+    const f = Math.min(maxForce, maxForce / (dist * 0.015 + 1));
+    const { dx, dy } = torusDelta(ta.x, ta.y, bestTb.x, bestTb.y, a.tw, a.th);
+    const nx = dx / dist;
+    const ny = dy / dist;
+    ta.fx += nx * f;
+    ta.fy += ny * f;
+    bestTb.fx -= nx * f * 0.35;
+    bestTb.fy -= ny * f * 0.35;
   }
 
   integrateParticles(a, dt);
   integrateParticles(b, dt);
-  const it = a._smooth > 0.5 ? 4 : 3;
+  const it = a._smooth > 0.5 ? 5 : 4;
   solveConstraints(a, it);
   solveConstraints(b, it);
 }
-
-// --------------- Fusion edge rendering ---------------
 
 export function drawFusionEdges(
   ctx: CanvasRenderingContext2D,
@@ -319,27 +322,24 @@ export function drawFusionEdges(
   b: Simplex,
   similarity: number,
 ) {
-  if (similarity < 0.4) return;
-  const alpha = (similarity - 0.4) / 0.6;
+  if (similarity < 0.35) return;
+  const alpha = (similarity - 0.35) / 0.65;
 
-  const tipsA = a.particles.filter((p) => p.depth >= ARM_SEGMENTS);
-  const tipsB = b.particles.filter((p) => p.depth >= ARM_SEGMENTS);
-
-  const maxDist = 120;
+  const tipsA = a.particles.filter((p) => p.depth >= 1);
+  const tipsB = b.particles.filter((p) => p.depth >= 1);
+  const maxDist = Math.min(a.tw, a.th) * 0.22;
 
   for (const ta of tipsA) {
     for (const tb of tipsB) {
-      const dx = tb.x - ta.x;
-      const dy = tb.y - ta.y;
+      const { dx, dy } = torusDelta(ta.x, ta.y, tb.x, tb.y, a.tw, a.th);
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > maxDist) continue;
 
-      const lineAlpha = alpha * (1 - dist / maxDist) * 0.35;
+      const lineAlpha = alpha * (1 - dist / maxDist) * 0.32;
       ctx.beginPath();
-      ctx.moveTo(ta.x, ta.y);
-      ctx.lineTo(tb.x, tb.y);
-      ctx.strokeStyle = `rgba(120, 100, 140, ${lineAlpha})`;
-      ctx.lineWidth = 0.5;
+      drawTorusSegment(ctx, ta.x, ta.y, tb.x, tb.y, a.tw, a.th);
+      ctx.strokeStyle = `rgba(100, 85, 130, ${lineAlpha})`;
+      ctx.lineWidth = 0.55;
       ctx.stroke();
     }
   }
