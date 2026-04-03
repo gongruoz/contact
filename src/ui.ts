@@ -15,7 +15,7 @@ export function fadeOutHint() {
 }
 
 export function showRoomCode(code: string) {
-  roomCodeEl.textContent = code;
+  roomCodeEl.textContent = code.trim().toUpperCase();
   roomCodeEl.classList.remove("hidden");
   btnCreate.classList.add("hidden");
   btnJoin.parentElement!.classList.add("hidden");
@@ -44,15 +44,17 @@ export function onCreateRoom(cb: () => void) {
 }
 
 export function onJoinRoom(cb: (code: string) => void) {
-  btnJoin.addEventListener("click", () => {
+  const submit = () => {
     const code = roomInput.value.trim().toUpperCase();
     if (code.length === 4) cb(code);
+  };
+  roomInput.addEventListener("input", () => {
+    const v = roomInput.value.toUpperCase();
+    if (roomInput.value !== v) roomInput.value = v;
   });
+  btnJoin.addEventListener("click", submit);
   roomInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      const code = roomInput.value.trim().toUpperCase();
-      if (code.length === 4) cb(code);
-    }
+    if (e.key === "Enter") submit();
   });
 }
 

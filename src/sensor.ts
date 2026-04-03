@@ -78,8 +78,25 @@ function onMouseMove(e: MouseEvent) {
   });
 }
 
+/**
+ * Whether to use device motion (accelerometer) instead of mouse.
+ * Tablets work the same as phones when the browser exposes DeviceMotionEvent
+ * (after permission on iOS Safari). This must catch iPad “desktop” UA
+ * (MacIntel + touch) so we don’t fall back to mouse on large iPads.
+ */
 export function isMobile(): boolean {
-  return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  const ua = navigator.userAgent;
+  if (/Mobi|Android|iPhone|iPad|Tablet|Silk|PlayBook/i.test(ua)) return true;
+  try {
+    const ud = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
+    if (ud?.mobile === true) return true;
+  } catch {
+    /* ignore */
+  }
+  if (navigator.maxTouchPoints > 1 && /MacIntel/i.test(navigator.platform)) {
+    return true;
+  }
+  return false;
 }
 
 export async function requestMotionPermission(): Promise<boolean> {

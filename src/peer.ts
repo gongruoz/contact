@@ -7,6 +7,11 @@ let onData: ((data: number[]) => void) | null = null;
 let onConnected: (() => void) | null = null;
 let onDisconnected: (() => void) | null = null;
 
+/** Room codes are always uppercase alphanumerics; callers may pass any case. */
+function normalizeRoomCode(code: string): string {
+  return code.trim().toUpperCase();
+}
+
 function genRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -34,12 +39,13 @@ export async function createRoom(): Promise<string> {
   const code = genRoomCode();
   peer = await createDataPeer({ id: `mb-${code}` });
   peer.on("connection", wireConnection);
-  return code;
+  return normalizeRoomCode(code);
 }
 
 export async function joinRoom(code: string): Promise<void> {
+  const id = normalizeRoomCode(code);
   peer = await createDataPeer();
-  const c = await peer.connect(`mb-${code}`);
+  const c = await peer.connect(`mb-${id}`);
   wireConnection(c);
 }
 
