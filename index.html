@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Motion Blob</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas#gl {
+      display: block; width: 100%; height: 100%;
+      position: fixed; top: 0; left: 0; z-index: 0;
+      touch-action: none;
+    }
+    #ui {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 10; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      pointer-events: none; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    #ui > * { pointer-events: auto; }
+    #hint {
+      font-size: 1rem; opacity: 0.5; letter-spacing: 0.05em;
+      transition: opacity 0.8s;
+    }
+    #connect-area {
+      margin-top: 2rem; display: flex; flex-direction: column;
+      align-items: center; gap: 0.75rem;
+    }
+    button {
+      background: rgba(255,255,255,0.1); color: #fff;
+      border: 1px solid rgba(255,255,255,0.25); border-radius: 6px;
+      padding: 0.5rem 1.5rem; font-size: 0.9rem; cursor: pointer;
+      backdrop-filter: blur(4px); transition: background 0.2s;
+    }
+    button:hover { background: rgba(255,255,255,0.2); }
+    input#room-input {
+      background: rgba(255,255,255,0.08); color: #fff; text-align: center;
+      border: 1px solid rgba(255,255,255,0.25); border-radius: 6px;
+      padding: 0.5rem 1rem; font-size: 1.2rem; width: 8rem;
+      letter-spacing: 0.3em; outline: none;
+    }
+    input#room-input::placeholder { color: rgba(255,255,255,0.3); }
+    #room-code {
+      font-size: 2rem; letter-spacing: 0.4em; font-weight: 300;
+      opacity: 0.9; user-select: all;
+    }
+    #status {
+      font-size: 0.8rem; opacity: 0.4; margin-top: 0.5rem;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+  <div id="ui">
+    <div id="hint">move your phone</div>
+    <div id="connect-area">
+      <button id="btn-create">create room</button>
+      <div style="display:flex;gap:0.5rem;align-items:center;">
+        <input id="room-input" maxlength="4" placeholder="code" />
+        <button id="btn-join">join</button>
+      </div>
+      <div id="room-code" class="hidden"></div>
+      <div id="status"></div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
