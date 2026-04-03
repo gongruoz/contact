@@ -48,7 +48,12 @@
     }
     #status {
       font-size: 0.8rem; opacity: 0.4; margin-top: 0.5rem;
+      max-width: min(90vw, 22rem);
+      text-align: center;
+      line-height: 1.35;
     }
+    #status.peer-error { opacity: 0.85; color: #522; }
+    #status.peer-error-detail { font-size: 0.68rem; opacity: 0.65; margin-top: 0.35rem; white-space: pre-wrap; word-break: break-word; }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -63,7 +68,10 @@
         <button id="btn-join">join</button>
       </div>
       <div id="room-code" class="hidden"></div>
-      <div id="status"></div>
+      <div id="status-wrap">
+        <div id="status"></div>
+        <div id="status-detail" class="hidden peer-error-detail"></div>
+      </div>
     </div>
   </div>
   <script type="module" src="/src/main.ts"></script>

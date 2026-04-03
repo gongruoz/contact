@@ -2,7 +2,8 @@ import { startSensor, isMobile, requestMotionPermission, type SensorSample } fro
 import { pushSample, extractFeatures, featuresToArray, arrayToFeatures, type Features } from "./dsp";
 import { computeSimilarity, resetSimilarity } from "./similarity";
 import { createRoom, joinRoom, sendFeatures, onPeerData, onPeerConnected, onPeerDisconnected } from "./peer";
-import { setHint, showRoomCode, showConnected, showDisconnected, onCreateRoom, onJoinRoom, setStatus } from "./ui";
+import { setHint, showRoomCode, showConnected, showDisconnected, onCreateRoom, onJoinRoom, setStatus, setPeerError } from "./ui";
+import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
 import { createSimplex, driveSimplex, drawSimplex, applyFusion, drawFusionEdges, type Simplex } from "./creature";
 
 const canvas = document.getElementById("gl") as HTMLCanvasElement;
@@ -176,8 +177,10 @@ async function init() {
     try {
       const code = await createRoom();
       showRoomCode(code);
-    } catch {
-      setStatus("failed to create room");
+    } catch (e) {
+      console.error("[contact] createRoom failed", e);
+      const { label, detail } = describePeerError(e);
+      setPeerError(label, detail, shouldShowPeerDetailOnScreen());
     }
   });
 
@@ -185,8 +188,10 @@ async function init() {
     setStatus("joining...");
     try {
       await joinRoom(code);
-    } catch {
-      setStatus("failed to join");
+    } catch (e) {
+      console.error("[contact] joinRoom failed", { roomCode: code, err: e });
+      const { label, detail } = describePeerError(e);
+      setPeerError(label, detail, shouldShowPeerDetailOnScreen());
     }
   });
 
