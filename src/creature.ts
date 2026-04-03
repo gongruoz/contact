@@ -1,23 +1,6 @@
 import type { Features } from "./dsp";
 
-// --------------- Torus helpers (2D periodic boundary) ---------------
-
-export function wrap(x: number, L: number): number {
-  return ((x % L) + L) % L;
-}
-
-/** Shortest vector from a toward b on a torus of size (tw, th) */
-function torusDelta(ax: number, ay: number, bx: number, by: number, tw: number, th: number) {
-  let dx = bx - ax;
-  let dy = by - ay;
-  if (dx > tw / 2) dx -= tw;
-  else if (dx < -tw / 2) dx += tw;
-  if (dy > th / 2) dy -= th;
-  else if (dy < -th / 2) dy += th;
-  return { dx, dy };
-}
-
-// --------------- Verlet particle system ---------------
+// --------------- Verlet (Euclidean plane, no torus) ---------------
 
 interface Particle {
   x: number;
@@ -26,9 +9,6 @@ interface Particle {
   py: number;
   fx: number;
   fy: number;
-  pinX: number;
-  pinY: number;
-  pinStrength: number;
   depth: number;
 }
 
@@ -42,10 +22,9 @@ interface Constraint {
 export interface Simplex {
   particles: Particle[];
   constraints: Constraint[];
+  /** World anchor: center of mass is locked here; structure does not drift with motion */
   cx: number;
   cy: number;
-  tw: number;
-  th: number;
   phase: number;
   _amp: number;
   _freq: number;
@@ -54,113 +33,119 @@ export interface Simplex {
 }
 
 function makeParticle(x: number, y: number, depth: number): Particle {
-  return {
-    x, y, px: x, py: y,
-    fx: 0, fy: 0,
-    pinX: x, pinY: y, pinStrength: 0,
-    depth,
-  };
+  return { x, y, px: x, py: y, fx: 0, fy: 0, depth };
 }
 
-// --------------- Closed hexagon simplex (core + 6 ring vertices) ---------------
+// --------------- Four nodes, cycle only (edges can cross when twisted) ---------------
 
-const RING_N = 6;
-/** Circumradius — larger figure */
-const RING_R = 118;
-/** Edge length of regular hexagon with circumradius R */
-const EDGE_REST = 2 * RING_R * Math.sin(Math.PI / RING_N);
+const N = 4;
+/** Initial radius from anchor — large enough to read */
+const R0 = 102;
 
-export function createSimplex(cx: number, cy: number, tw: number, th: number): Simplex {
+export function createSimplex(cx: number, cy: number): Simplex {
   const particles: Particle[] = [];
   const constraints: Constraint[] = [];
 
-  const core = makeParticle(wrap(cx, tw), wrap(cy, th), 0);
-  core.pinX = wrap(cx, tw);
-  core.pinY = wrap(cy, th);
-  core.pinStrength = 0.018;
-  particles.push(core);
-
-  for (let i = 0; i < RING_N; i++) {
-    const ang = (i / RING_N) * Math.PI * 2 - Math.PI / 2;
-    const px = wrap(cx + Math.cos(ang) * RING_R, tw);
-    const py = wrap(cy + Math.sin(ang) * RING_R, th);
-    const p = makeParticle(px, py, 1);
-    const idx = particles.length;
-    particles.push(p);
-    constraints.push({ a: 0, b: idx, rest: RING_R, stiffness: 0.42 });
+  for (let i = 0; i < N; i++) {
+    const ang = (i / N) * Math.PI * 2 - Math.PI / 2;
+    const px = cx + Math.cos(ang) * R0;
+    const py = cy + Math.sin(ang) * R0;
+    particles.push(makeParticle(px, py, 0));
   }
 
-  for (let i = 0; i < RING_N; i++) {
-    const a = 1 + i;
-    const b = 1 + ((i + 1) % RING_N);
-    constraints.push({ a, b, rest: EDGE_REST, stiffness: 0.42 });
+  for (let i = 0; i < N; i++) {
+    const a = i;
+    const b = (i + 1) % N;
+    const pa = particles[a];
+    const pb = particles[b];
+    const d0 = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    constraints.push({ a, b, rest: d0, stiffness: 0.22 });
   }
 
   return {
-    particles, constraints, cx, cy, tw, th,
+    particles, constraints, cx, cy,
     phase: Math.random() * Math.PI * 2,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
   };
 }
 
-// --------------- Physics ---------------
+/** Keep centroid on anchor — motion never translates the whole figure */
+function lockCenterOfMass(s: Simplex) {
+  const ps = s.particles;
+  let mx = 0;
+  let my = 0;
+  for (const p of ps) {
+    mx += p.x;
+    my += p.y;
+  }
+  mx /= ps.length;
+  my /= ps.length;
+  const dx = s.cx - mx;
+  const dy = s.cy - my;
+  for (const p of ps) {
+    p.x += dx;
+    p.y += dy;
+    p.px += dx;
+    p.py += dy;
+  }
+}
 
-const DAMPING_BASE = 0.985;
-const GRAVITY = 0;
-/** Lower = calmer motion */
-const ACC_SCALE = 7500;
+const DAMPING_BASE = 0.988;
+const ACC_SCALE = 7200;
 
 function integrateParticles(s: Simplex, dt: number) {
-  const { tw, th } = s;
   const acc = dt * dt * ACC_SCALE;
   for (const p of s.particles) {
     const vx = (p.x - p.px) * DAMPING_BASE;
     const vy = (p.y - p.py) * DAMPING_BASE;
-
     p.px = p.x;
     p.py = p.y;
-
     p.x += vx + p.fx * acc;
-    p.y += vy + (p.fy + GRAVITY) * acc;
-
-    if (p.pinStrength > 0) {
-      const { dx, dy } = torusDelta(p.x, p.y, p.pinX, p.pinY, tw, th);
-      p.x += dx * p.pinStrength;
-      p.y += dy * p.pinStrength;
-    }
-
-    p.x = wrap(p.x, tw);
-    p.y = wrap(p.y, th);
-
+    p.y += vy + p.fy * acc;
     p.fx = 0;
     p.fy = 0;
   }
 }
 
 function solveConstraints(s: Simplex, iterations: number) {
-  const { tw, th } = s;
   for (let iter = 0; iter < iterations; iter++) {
     for (const c of s.constraints) {
       const pa = s.particles[c.a];
       const pb = s.particles[c.b];
-      const { dx, dy } = torusDelta(pa.x, pa.y, pb.x, pb.y, tw, th);
+      let dx = pb.x - pa.x;
+      let dy = pb.y - pa.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
       const diff = (dist - c.rest) / dist;
       const moveX = dx * diff * c.stiffness * 0.5;
       const moveY = dy * diff * c.stiffness * 0.5;
-      if (pa.pinStrength < 1) {
-        pa.x = wrap(pa.x + moveX, tw);
-        pa.y = wrap(pa.y + moveY, th);
-      }
-      if (pb.pinStrength < 1) {
-        pb.x = wrap(pb.x - moveX, tw);
-        pb.y = wrap(pb.y - moveY, th);
-      }
+      pa.x += moveX;
+      pa.y += moveY;
+      pb.x -= moveX;
+      pb.y -= moveY;
     }
   }
 }
 
-// --------------- Feature-driven forces ---------------
+/** Edge rest lengths breathe slowly toward current span — soft, twist-friendly */
+function adaptRestLengths(s: Simplex) {
+  for (const c of s.constraints) {
+    const pa = s.particles[c.a];
+    const pb = s.particles[c.b];
+    const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    c.rest += (d - c.rest) * 0.04;
+  }
+}
+
+function com(s: Simplex) {
+  let mx = 0;
+  let my = 0;
+  for (const p of s.particles) {
+    mx += p.x;
+    my += p.y;
+  }
+  const n = s.particles.length;
+  return { x: mx / n, y: my / n };
+}
 
 export function driveSimplex(
   s: Simplex,
@@ -175,64 +160,90 @@ export function driveSimplex(
   s._axis += (features.axis - s._axis) * lerpRate;
   s._smooth += (features.smoothness - s._smooth) * lerpRate;
 
-  const stiffMul = 0.28 + s._smooth * 0.5;
+  const stiffMul = 0.18 + s._smooth * 0.55;
   for (const c of s.constraints) {
     c.stiffness = stiffMul;
   }
 
   const dirAngle = s._axis * Math.PI;
-  const speed = 0.6 + s._freq * 5.0;
+  const speed = 0.55 + s._freq * 4.5;
   s.phase += speed * dt;
   const osc = Math.sin(s.phase);
 
-  const forceMag = s._amp * 1.1;
-  const core = s.particles[0];
-  core.fx += Math.cos(dirAngle) * osc * forceMag;
-  core.fy += Math.sin(dirAngle) * osc * forceMag;
+  const { x: cx, y: cy } = com(s);
 
-  core.fx += rawAx * 2.4;
-  core.fy += rawAy * 2.4;
+  const forceMag = s._amp * 0.95;
+  // Tangential unit from (rawAx, rawAy) — twist, zero net linear push on COM
+  const rawLen = Math.hypot(rawAx, rawAy) || 1e-8;
+  const tx = -rawAy / rawLen;
+  const ty = rawAx / rawLen;
 
-  for (let i = 1; i < s.particles.length; i++) {
+  for (let i = 0; i < N; i++) {
     const p = s.particles[i];
-    const depthFalloff = 1 / (1 + p.depth * 0.5);
-    const phaseShift = p.depth * 0.35;
-    const localOsc = Math.sin(s.phase - phaseShift);
-    p.fx += Math.cos(dirAngle) * localOsc * forceMag * depthFalloff * 0.28;
-    p.fy += Math.sin(dirAngle) * localOsc * forceMag * depthFalloff * 0.28;
+    const rx = p.x - cx;
+    const ry = p.y - cy;
+    const rl = Math.hypot(rx, ry) || 1e-8;
+    const ux = rx / rl;
+    const uy = ry / rl;
+    // radial breathing (alternating)
+    const phase = (i / N) * Math.PI * 2;
+    const rad = osc * forceMag * Math.cos(s.phase * 0.5 + phase);
+    p.fx += ux * rad;
+    p.fy += uy * rad;
+    // twist: tangential to orbit, driven by sensor
+    const twist = (tx * -uy + ty * ux) * rawLen * 2.8;
+    p.fx += -uy * twist;
+    p.fy += ux * twist;
+    // axis-aligned oscillation (choreographic)
+    p.fx += Math.cos(dirAngle) * osc * forceMag * 0.35;
+    p.fy += Math.sin(dirAngle) * osc * forceMag * 0.35;
   }
 
-  const breathAmp = 0.12 * (1 - s._amp * 0.85);
-  for (let i = 1; i < s.particles.length; i++) {
+  const breath = 0.1 * (1 - s._amp * 0.8);
+  for (let i = 0; i < N; i++) {
     const p = s.particles[i];
-    const { dx, dy } = torusDelta(s.cx, s.cy, p.x, p.y, s.tw, s.th);
-    const angle = Math.atan2(dy, dx);
-    const breathPhase = s.phase * 0.12 + p.depth * 0.25;
-    p.fx += Math.cos(angle) * Math.sin(breathPhase) * breathAmp;
-    p.fy += Math.sin(angle) * Math.sin(breathPhase) * breathAmp;
+    const rx = p.x - cx;
+    const ry = p.y - cy;
+    const rl = Math.hypot(rx, ry) || 1;
+    const ux = rx / rl;
+    const uy = ry / rl;
+    const bp = s.phase * 0.15 + i * 0.9;
+    p.fx += ux * Math.sin(bp) * breath;
+    p.fy += uy * Math.sin(bp) * breath;
   }
+
+  adaptRestLengths(s);
 
   integrateParticles(s, dt);
-  const constraintIter = s._smooth > 0.5 ? 5 : 4;
+  const constraintIter = s._smooth > 0.5 ? 6 : 5;
   solveConstraints(s, constraintIter);
+  lockCenterOfMass(s);
 }
 
-// --------------- Rendering (torus-aware edges) ---------------
+// --------------- Rendering: gap between edge and dot (breathing line) ---------------
 
-function drawTorusSegment(
+const NODE_GAP = 6;
+const NODE_R = 4;
+
+function drawEdgeGapped(
   ctx: CanvasRenderingContext2D,
   ax: number,
   ay: number,
   bx: number,
   by: number,
-  tw: number,
-  th: number,
+  gap: number,
 ) {
-  const { dx, dy } = torusDelta(ax, ay, bx, by, tw, th);
-  const x1 = wrap(ax, tw);
-  const y1 = wrap(ay, th);
-  const x2 = wrap(ax + dx, tw);
-  const y2 = wrap(ay + dy, th);
+  let dx = bx - ax;
+  let dy = by - ay;
+  const len = Math.hypot(dx, dy) || 1e-8;
+  dx /= len;
+  dy /= len;
+  const t = Math.max(0, len - 2 * gap);
+  if (t < 1) return;
+  const x1 = ax + dx * gap;
+  const y1 = ay + dy * gap;
+  const x2 = ax + dx * (gap + t);
+  const y2 = ay + dy * (gap + t);
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
 }
@@ -246,67 +257,58 @@ export function drawSimplex(
 
   const hue = s._axis * 360;
   const sat = 15 + s._amp * 25;
-  const { tw, th } = s;
 
+  ctx.beginPath();
   for (const c of s.constraints) {
     const pa = s.particles[c.a];
     const pb = s.particles[c.b];
-    const avgDepth = (pa.depth + pb.depth) / 2;
-    const lw = Math.max(0.7, 2.4 - avgDepth * 0.35);
-    const edgeAlpha = opacity * (0.5 - avgDepth * 0.06);
-
-    ctx.beginPath();
-    drawTorusSegment(ctx, pa.x, pa.y, pb.x, pb.y, tw, th);
-    ctx.strokeStyle = `hsla(${hue}, ${sat}%, 28%, ${Math.max(0.06, edgeAlpha)})`;
-    ctx.lineWidth = lw;
-    ctx.stroke();
+    drawEdgeGapped(ctx, pa.x, pa.y, pb.x, pb.y, NODE_GAP);
   }
+  ctx.strokeStyle = `hsla(${hue}, ${sat}%, 28%, ${opacity * 0.48})`;
+  ctx.lineWidth = 1.35;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.stroke();
 
   for (const p of s.particles) {
-    const r = p.depth === 0 ? 4.2 : Math.max(1.4, 3.2 - p.depth * 0.4);
-    const nodeAlpha = opacity * (0.75 - p.depth * 0.08);
-    const sx = wrap(p.x, tw);
-    const sy = wrap(p.y, th);
-
     ctx.beginPath();
-    ctx.arc(sx, sy, r, 0, Math.PI * 2);
-    ctx.fillStyle = `hsla(${hue}, ${sat}%, 22%, ${Math.max(0.1, nodeAlpha)})`;
+    ctx.arc(p.x, p.y, NODE_R, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${hue}, ${sat}%, 22%, ${opacity * 0.8})`;
     ctx.fill();
   }
 }
 
-// --------------- Fusion (ring vertices = depth 1) ---------------
+// --------------- Fusion (pairwise nodes, Euclidean) ---------------
 
 export function applyFusion(a: Simplex, b: Simplex, similarity: number, dt: number) {
-  if (similarity < 0.25) return;
+  if (similarity < 0.22) return;
 
-  const strength = (similarity - 0.25) / 0.75;
-  const maxForce = 0.045 * strength;
+  const strength = (similarity - 0.22) / 0.78;
+  const maxF = 0.05 * strength;
 
-  const tipsA = a.particles.filter((p) => p.depth >= 1);
-  const tipsB = b.particles.filter((p) => p.depth >= 1);
-
-  for (const ta of tipsA) {
-    let bestD2 = Infinity;
+  for (const ta of a.particles) {
+    let best = Infinity;
     let bestTb: Particle | null = null;
-    for (const tb of tipsB) {
-      const { dx, dy } = torusDelta(ta.x, ta.y, tb.x, tb.y, a.tw, a.th);
+    for (const tb of b.particles) {
+      const dx = tb.x - ta.x;
+      const dy = tb.y - ta.y;
       const d2 = dx * dx + dy * dy;
-      if (d2 < bestD2) {
-        bestD2 = d2;
+      if (d2 < best) {
+        best = d2;
         bestTb = tb;
       }
     }
     if (!bestTb) continue;
-    const dist = Math.sqrt(bestD2) || 1;
-    const f = Math.min(maxForce, maxForce / (dist * 0.015 + 1));
-    const { dx, dy } = torusDelta(ta.x, ta.y, bestTb.x, bestTb.y, a.tw, a.th);
+    const dist = Math.sqrt(best) || 1;
+    const f = Math.min(maxF, maxF / (dist * 0.012 + 1));
+    const dx = bestTb.x - ta.x;
+    const dy = bestTb.y - ta.y;
     const nx = dx / dist;
     const ny = dy / dist;
     ta.fx += nx * f;
     ta.fy += ny * f;
-    bestTb.fx -= nx * f * 0.35;
-    bestTb.fy -= ny * f * 0.35;
+    bestTb.fx -= nx * f * 0.4;
+    bestTb.fy -= ny * f * 0.4;
   }
 
   integrateParticles(a, dt);
@@ -314,6 +316,8 @@ export function applyFusion(a: Simplex, b: Simplex, similarity: number, dt: numb
   const it = a._smooth > 0.5 ? 5 : 4;
   solveConstraints(a, it);
   solveConstraints(b, it);
+  lockCenterOfMass(a);
+  lockCenterOfMass(b);
 }
 
 export function drawFusionEdges(
@@ -322,24 +326,23 @@ export function drawFusionEdges(
   b: Simplex,
   similarity: number,
 ) {
-  if (similarity < 0.35) return;
-  const alpha = (similarity - 0.35) / 0.65;
+  if (similarity < 0.32) return;
+  const alpha = (similarity - 0.32) / 0.68;
+  const maxDist = 220;
 
-  const tipsA = a.particles.filter((p) => p.depth >= 1);
-  const tipsB = b.particles.filter((p) => p.depth >= 1);
-  const maxDist = Math.min(a.tw, a.th) * 0.22;
-
-  for (const ta of tipsA) {
-    for (const tb of tipsB) {
-      const { dx, dy } = torusDelta(ta.x, ta.y, tb.x, tb.y, a.tw, a.th);
-      const dist = Math.sqrt(dx * dx + dy * dy);
+  for (const ta of a.particles) {
+    for (const tb of b.particles) {
+      const dx = tb.x - ta.x;
+      const dy = tb.y - ta.y;
+      const dist = Math.hypot(dx, dy);
       if (dist > maxDist) continue;
-
-      const lineAlpha = alpha * (1 - dist / maxDist) * 0.32;
+      const lineAlpha = alpha * (1 - dist / maxDist) * 0.28;
+      if (lineAlpha < 0.01) continue;
       ctx.beginPath();
-      drawTorusSegment(ctx, ta.x, ta.y, tb.x, tb.y, a.tw, a.th);
+      drawEdgeGapped(ctx, ta.x, ta.y, tb.x, tb.y, NODE_GAP);
       ctx.strokeStyle = `rgba(100, 85, 130, ${lineAlpha})`;
       ctx.lineWidth = 0.55;
+      ctx.lineCap = "round";
       ctx.stroke();
     }
   }
