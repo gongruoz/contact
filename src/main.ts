@@ -176,11 +176,63 @@ function loop(time: number) {
 }
 
 async function init() {
+  // #region agent log — on-screen debug for phones
+  const _dbg = {
+    mobile: isMobile(),
+    tp: navigator.maxTouchPoints,
+    coarse: window.matchMedia?.("(pointer: coarse)")?.matches,
+    ua: navigator.userAgent.slice(0, 120),
+    hasDM: typeof DeviceMotionEvent !== "undefined",
+    hasReqPerm:
+      typeof DeviceMotionEvent !== "undefined" &&
+      typeof (DeviceMotionEvent as any).requestPermission === "function",
+    platform: navigator.platform,
+  };
+  const _dbgEl = document.createElement("div");
+  _dbgEl.id = "dbg-overlay";
+  _dbgEl.style.cssText =
+    "position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(0,0,0,0.75);color:#0f0;" +
+    "font:11px/1.4 monospace;padding:8px 10px;white-space:pre-wrap;word-break:break-all;pointer-events:none";
+  _dbgEl.textContent = JSON.stringify(_dbg);
+  document.body.appendChild(_dbgEl);
+
+  fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
+    body: JSON.stringify({
+      sessionId: "ab4e8d",
+      location: "main.ts:init",
+      message: "sensor path bootstrap",
+      data: _dbg,
+      timestamp: Date.now(),
+      hypothesisId: "H1",
+    }),
+  }).catch(() => {});
+  // #endregion
+
   if (isMobile()) {
     setHint("tap to start");
     const startOnTap = async () => {
+      // #region agent log
+      fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
+        body: JSON.stringify({
+          sessionId: "ab4e8d",
+          location: "main.ts:startOnTap",
+          message: "user gesture received",
+          data: {},
+          timestamp: Date.now(),
+          hypothesisId: "H2",
+        }),
+      }).catch(() => {});
+      _dbgEl.textContent += "\ntap!";
+      // #endregion
       document.removeEventListener("click", startOnTap);
       const ok = await requestMotionPermission();
+      // #region agent log
+      _dbgEl.textContent += `\nperm=${ok}`;
+      // #endregion
       if (!ok) {
         setHint("motion permission denied");
         return;
@@ -190,6 +242,21 @@ async function init() {
     };
     document.addEventListener("click", startOnTap);
   } else {
+    // #region agent log
+    _dbgEl.textContent += "\npath=mouse";
+    fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
+      body: JSON.stringify({
+        sessionId: "ab4e8d",
+        location: "main.ts:init",
+        message: "desktop sensor path (mousemove)",
+        data: {},
+        timestamp: Date.now(),
+        hypothesisId: "H1",
+      }),
+    }).catch(() => {});
+    // #endregion
     setHint("move your mouse — make it dance");
     startSensor(onSensorSample);
   }
