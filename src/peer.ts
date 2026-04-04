@@ -7,17 +7,7 @@ let onData: ((data: number[]) => void) | null = null;
 let onConnected: (() => void) | null = null;
 let onDisconnected: (() => void) | null = null;
 
-/** Extra STUN set (tinypeer already adds some; more candidates help symmetric NAT). */
-const RTC_EXTRA: RTCConfiguration = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:stun.cloudflare.com:3478" },
-  ],
-};
-
-const JOIN_TIMEOUT_MS = 40_000;
+const CONNECT_MS = 45_000;
 
 /** Room codes are always uppercase alphanumerics; callers may pass any case. */
 function normalizeRoomCode(code: string): string {
@@ -29,6 +19,16 @@ function genRoomCode(): string {
   let code = "";
   for (let i = 0; i < 4; i++) code += chars[(Math.random() * chars.length) | 0];
   return code;
+}
+
+/**
+ * Signaling may normalize id casing; join must dial the same id the host registered.
+ * Prefer the suffix after `mb-` from the live peer id for the on-screen code.
+ */
+function canonicalRoomCode(peerId: string, fallback: string): string {
+  const m = /^mb-(.+)$/i.exec(peerId.trim());
+  if (m) return normalizeRoomCode(m[1]);
+  return normalizeRoomCode(fallback);
 }
 
 function wireConnection(c: Connection) {
@@ -49,43 +49,23 @@ function wireConnection(c: Connection) {
 
 export async function createRoom(): Promise<string> {
   destroyPeer();
-  const code = genRoomCode();
-  peer = await createDataPeer({ id: `mb-${code}`, rtcConfig: RTC_EXTRA });
+  const requested = genRoomCode();
+  peer = await createDataPeer({ id: `mb-${requested}` });
   peer.on("connection", wireConnection);
-  return normalizeRoomCode(code);
+  return canonicalRoomCode(peer.id, requested);
 }
 
 export async function joinRoom(code: string): Promise<void> {
   destroyPeer();
-  const id = normalizeRoomCode(code);
-  peer = await createDataPeer({ rtcConfig: RTC_EXTRA });
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const suffix = normalizeRoomCode(code);
+  const hostId = `mb-${suffix}`;
   try {
-    const c = await new Promise<Connection>((resolve, reject) => {
-      timer = setTimeout(() => {
-        reject(
-          new Error(
-            "Join timed out — keep the host tab open, check network, and try again.",
-          ),
-        );
-      }, JOIN_TIMEOUT_MS);
-      peer!
-        .connect(`mb-${id}`, { connectionTimeout: JOIN_TIMEOUT_MS })
-        .then(
-          (connection) => {
-            if (timer !== undefined) clearTimeout(timer);
-            resolve(connection);
-          },
-          (err) => {
-            if (timer !== undefined) clearTimeout(timer);
-            reject(err instanceof Error ? err : new Error(String(err)));
-          },
-        );
-    });
+    peer = await createDataPeer();
+    const c = await peer.connect(hostId, { connectionTimeout: CONNECT_MS });
     wireConnection(c);
   } catch (e) {
     destroyPeer();
-    throw e;
+    throw e instanceof Error ? e : new Error(String(e));
   }
 }
 
