@@ -1,7 +1,10 @@
 import { startSensor, isMobile, requestMotionPermission, type SensorSample } from "./sensor";
 import { pushSample, extractFeatures, arrayToFeatures, type Features } from "./dsp";
 import { computeSimilarity, resetSimilarity } from "./similarity";
-import { createRoom, joinRoom, sendFeatures, onPeerData, onPeerConnected, onPeerDisconnected } from "./peer";
+import {
+  createRoom, joinRoom, sendFeatures, burstSendFeatures,
+  onPeerData, onPeerConnected, onPeerDisconnected,
+} from "./peer";
 import { setHint, showRoomCode, showConnected, showDisconnected, onCreateRoom, onJoinRoom, setStatus, setPeerError, fadeOutHint } from "./ui";
 import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
 import {
@@ -14,7 +17,15 @@ const canvas = document.getElementById("gl") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 
 let selfFeatures: Features = { amplitude: 0, frequency: 0, axis: 0, smoothness: 0 };
+/** While connected, always non-null so the peer diagram can render before the first packet. */
 let peerFeatures: Features | null = null;
+
+const PLACEHOLDER_PEER_FEATURES: Features = {
+  amplitude: 0,
+  frequency: 0,
+  axis: 0.5,
+  smoothness: 0,
+};
 let peerRawAx = 0;
 let peerRawAy = 0;
 let connected = false;
@@ -90,8 +101,16 @@ function normalizePeerPayload(data: unknown): number[] | null {
   if (Array.isArray(data) && data.length >= 4) {
     return data.map((x) => Number(x));
   }
-  if (data && typeof data === "object") {
-    const v = Object.values(data as Record<string, unknown>).map((x) => Number(x));
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const o = data as Record<string, unknown>;
+    const keys = Object.keys(o)
+      .filter((k) => /^\d+$/.test(k))
+      .sort((a, b) => Number(a) - Number(b));
+    if (keys.length >= 4) {
+      const ordered = keys.map((k) => Number(o[k]));
+      if (ordered.every((n) => !Number.isNaN(n))) return ordered;
+    }
+    const v = Object.values(o).map((x) => Number(x));
     if (v.length >= 4 && v.every((n) => !Number.isNaN(n))) return v;
   }
   return null;
@@ -107,7 +126,7 @@ onPeerData((data) => {
 
 onPeerConnected(() => {
   connected = true;
-  peerFeatures = null;
+  peerFeatures = { ...PLACEHOLDER_PEER_FEATURES };
   peerRawAx = 0;
   peerRawAy = 0;
   resetSimilarity();
@@ -120,7 +139,7 @@ onPeerConnected(() => {
     selfFeatures.axis, selfFeatures.smoothness,
     latestRawAx, latestRawAy,
   ]);
-  sendFeatures(arr);
+  burstSendFeatures(arr);
 });
 
 onPeerDisconnected(() => {
@@ -143,7 +162,7 @@ function loop(time: number) {
   let similarity = 0;
   let mergePairs: MergePair[] = [];
 
-  if (connected && peerFeatures) {
+  if (connected && peerFeatures !== null) {
     similarity = computeSimilarity(selfFeatures, peerFeatures);
     layoutAnchors(similarity);
   } else {
@@ -155,7 +174,7 @@ function loop(time: number) {
 
   driveSimplex(selfSimplex, selfFeatures, latestRawAx, latestRawAy, dt);
 
-  if (connected && peerFeatures) {
+  if (connected && peerFeatures !== null) {
     driveSimplex(peerSimplex, peerFeatures, peerRawAx, peerRawAy, dt);
     mergePairs = computeMergePairs(selfSimplex, peerSimplex, similarity);
     applyFusion(selfSimplex, peerSimplex, mergePairs, dt);
@@ -167,7 +186,7 @@ function loop(time: number) {
 
   drawSimplex(ctx, selfSimplex, 1, "self");
 
-  if (connected && peerFeatures) {
+  if (connected && peerFeatures !== null) {
     drawSimplex(ctx, peerSimplex, 1, "peer");
     drawMergeEffects(ctx, selfSimplex, peerSimplex, mergePairs, time);
   }

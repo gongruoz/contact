@@ -28,6 +28,9 @@ export interface Simplex {
   leanY: number;
   /** Smoothed tilt (rad); applied incrementally so shape mimics device tilt */
   tiltSmoothed: number;
+  /** Low-pass of raw motion (per-simplex; damps high-frequency noise before forces) */
+  smRawX: number;
+  smRawY: number;
 }
 
 export interface MergePair {
@@ -68,6 +71,7 @@ export function createSimplex(cx: number, cy: number): Simplex {
     phase: Math.random() * Math.PI * 2,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
     leanX: 0, leanY: 0, tiltSmoothed: 0,
+    smRawX: 0, smRawY: 0,
   };
 }
 

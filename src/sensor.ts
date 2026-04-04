@@ -15,6 +15,8 @@ const DM_OPTS: AddEventListenerOptions = { passive: true };
 const PHONE_ACCEL_REF = 2.2;
 /** rotationRate is deg/s in WebKit; scale to similar magnitude as accel */
 const RR_REF = 90;
+/** Low-pass on device samples (reduces IMU jitter; ~0.1 ≈ gentle smoothing) */
+const DEVICE_EMA = 0.11;
 
 function accelTriplet(o: DeviceMotionEventAcceleration | null): [number, number, number] | null {
   if (!o) return null;
@@ -25,6 +27,10 @@ function accelTriplet(o: DeviceMotionEventAcceleration | null): [number, number,
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
   return [x, y, z];
 }
+
+let emaAx = 0;
+let emaAy = 0;
+let emaAz = 0;
 
 function onDeviceMotion(e: DeviceMotionEvent) {
   let ax = 0;
@@ -63,10 +69,17 @@ function onDeviceMotion(e: DeviceMotionEvent) {
   }
 
   const ref = source === "gyro" ? RR_REF : PHONE_ACCEL_REF;
+  const tx = Math.tanh(ax / ref);
+  const ty = Math.tanh(ay / ref);
+  const tz = Math.tanh(az / ref);
+  const k = DEVICE_EMA;
+  emaAx += k * (tx - emaAx);
+  emaAy += k * (ty - emaAy);
+  emaAz += k * (tz - emaAz);
   cb?.({
-    ax: Math.tanh(ax / ref),
-    ay: Math.tanh(ay / ref),
-    az: Math.tanh(az / ref),
+    ax: emaAx,
+    ay: emaAy,
+    az: emaAz,
     t: performance.now(),
   });
 }
@@ -98,7 +111,7 @@ function onMouseMove(e: MouseEvent) {
   lastMx = e.clientX;
   lastMy = e.clientY;
 
-  const alpha = 0.15;
+  const alpha = 0.085;
   smoothVx += alpha * (rawVx - smoothVx);
   smoothVy += alpha * (rawVy - smoothVy);
 
@@ -145,6 +158,9 @@ export async function requestMotionPermission(): Promise<boolean> {
 
 export function startSensor(callback: SensorCallback) {
   cb = callback;
+  emaAx = 0;
+  emaAy = 0;
+  emaAz = 0;
   const mobile = isMobile();
   if (mobile) {
     window.addEventListener("devicemotion", onDeviceMotion, DM_OPTS);

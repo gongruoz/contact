@@ -89,6 +89,10 @@ function dominantFrequency(): number {
 const FREQ_MAX = 12;
 /** jerk on tanh-normalized magnitude (same units mouse vs phone) */
 const JERK_MAX = 0.35;
+/** EMA on extracted features (reduces feature flicker from noisy buffers) */
+const FEATURE_EMA = 0.16;
+
+let featSmooth: Features = { amplitude: 0, frequency: 0, axis: 0.5, smoothness: 0 };
 
 export function extractFeatures(): Features {
   const magRms = rms(magBuf);
@@ -110,7 +114,17 @@ export function extractFeatures(): Features {
   const jerkRms = rms(jerkBuf);
   const smoothness = Math.min(jerkRms / JERK_MAX, 1);
 
-  return { amplitude: amp, frequency: freq, axis, smoothness };
+  const k = FEATURE_EMA;
+  featSmooth.amplitude += k * (amp - featSmooth.amplitude);
+  featSmooth.frequency += k * (freq - featSmooth.frequency);
+  featSmooth.axis += k * (axis - featSmooth.axis);
+  featSmooth.smoothness += k * (smoothness - featSmooth.smoothness);
+  return {
+    amplitude: featSmooth.amplitude,
+    frequency: featSmooth.frequency,
+    axis: featSmooth.axis,
+    smoothness: featSmooth.smoothness,
+  };
 }
 
 export function featuresToArray(f: Features): Float32Array {
