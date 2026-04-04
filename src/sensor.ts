@@ -125,17 +125,14 @@ function onMouseMove(e: MouseEvent) {
  * (MacIntel + touch) so we don’t fall back to mouse on large iPads.
  */
 export function isMobile(): boolean {
+  if (typeof DeviceMotionEvent !== "undefined" && navigator.maxTouchPoints > 0) return true;
+  if (window.matchMedia?.("(pointer: coarse)")?.matches) return true;
   const ua = navigator.userAgent;
-  if (/Mobi|Android|iPhone|iPad|Tablet|Silk|PlayBook/i.test(ua)) return true;
+  if (/Mobi|Android|iPhone|iPad|Tablet/i.test(ua)) return true;
   try {
     const ud = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
     if (ud?.mobile === true) return true;
-  } catch {
-    /* ignore */
-  }
-  if (navigator.maxTouchPoints > 1 && /MacIntel/i.test(navigator.platform)) {
-    return true;
-  }
+  } catch { /* ignore */ }
   return false;
 }
 
