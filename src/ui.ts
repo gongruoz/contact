@@ -71,14 +71,20 @@ export function onCreateRoom(cb: () => void) {
   btnCreate.addEventListener("click", cb);
 }
 
+function sanitizeRoomInput(): string {
+  return roomInput.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 4);
+}
+
 export function onJoinRoom(cb: (code: string) => void) {
   const submit = () => {
-    const code = roomInput.value.trim().toUpperCase();
+    const code = sanitizeRoomInput();
+    roomInput.value = code;
     if (code.length === 4) cb(code);
+    else setStatus("enter 4 letters or numbers");
   };
   roomInput.addEventListener("input", () => {
-    const v = roomInput.value.toUpperCase();
-    if (roomInput.value !== v) roomInput.value = v;
+    const cleaned = sanitizeRoomInput();
+    if (roomInput.value !== cleaned) roomInput.value = cleaned;
   });
   btnJoin.addEventListener("click", submit);
   roomInput.addEventListener("keydown", (e) => {

@@ -36,6 +36,7 @@ function wireConnection(c: Connection) {
 }
 
 export async function createRoom(): Promise<string> {
+  destroyPeer();
   const code = genRoomCode();
   peer = await createDataPeer({ id: `mb-${code}` });
   peer.on("connection", wireConnection);
@@ -43,6 +44,7 @@ export async function createRoom(): Promise<string> {
 }
 
 export async function joinRoom(code: string): Promise<void> {
+  destroyPeer();
   const id = normalizeRoomCode(code);
   peer = await createDataPeer();
   const c = await peer.connect(`mb-${id}`);

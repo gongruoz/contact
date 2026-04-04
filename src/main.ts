@@ -175,7 +175,7 @@ function loop(time: number) {
   requestAnimationFrame(loop);
 }
 
-/** Mobile: window capture listeners must not eat taps on create/join UI. */
+/** Mobile: ignore taps on room UI when enabling motion (bubble phase so Join/Create run first). */
 function isTargetInsideConnectUI(target: EventTarget | null): boolean {
   if (!target || !(target instanceof Node)) return false;
   const area = document.getElementById("connect-area");
@@ -190,9 +190,9 @@ async function init() {
       setHint("create or join · then tap to dance");
     }
     const detachGesture = () => {
-      window.removeEventListener("pointerdown", startOnTap, true);
-      window.removeEventListener("touchend", startOnTap, true);
-      window.removeEventListener("click", startOnTap, true);
+      window.removeEventListener("pointerdown", startOnTap, false);
+      window.removeEventListener("touchend", startOnTap, false);
+      window.removeEventListener("click", startOnTap, false);
     };
     let started = false;
     const startOnTap = async (ev: Event) => {
@@ -213,9 +213,9 @@ async function init() {
       setHint("move your body — make it dance");
       startSensor(onSensorSample);
     };
-    window.addEventListener("pointerdown", startOnTap, true);
-    window.addEventListener("touchend", startOnTap, true);
-    window.addEventListener("click", startOnTap, true);
+    window.addEventListener("pointerdown", startOnTap, false);
+    window.addEventListener("touchend", startOnTap, false);
+    window.addEventListener("click", startOnTap, false);
   } else {
     setHint("move your mouse — make it dance");
     startSensor(onSensorSample);
