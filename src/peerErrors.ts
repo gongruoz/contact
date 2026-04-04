@@ -7,49 +7,49 @@ export function describePeerError(error: unknown): { label: string; detail: stri
 
   if (m.includes("connection timeout")) {
     return {
-      label: "Timed out — check code, or host must keep this page open",
+      label: "连接超时：请核对房间码，房主需保持本页打开",
       detail,
     };
   }
   if (m.includes("could not connect to peer")) {
     return {
-      label: "Host left or room expired — try a new room",
+      label: "对方已离开或房间已失效，请重新创建房间",
       detail,
     };
   }
   if (m.includes("websocket") || m.includes("failed to create websocket")) {
     return {
-      label: "Can't reach signaling server — check network / firewall",
+      label: "无法连接信令服务，请检查网络或防火墙",
       detail,
     };
   }
   if (m.includes("invalid peer id")) {
     return {
-      label: "Invalid room id",
+      label: "房间码无效",
       detail,
     };
   }
   if (m.includes("id-taken") || m.includes("id taken")) {
     return {
-      label: "ID conflict — refresh and try again",
+      label: "标识冲突，请刷新页面后重试",
       detail,
     };
   }
   if (m.includes("parse server message")) {
     return {
-      label: "Signaling error",
+      label: "信令异常",
       detail,
     };
   }
   if (m.includes("peer has been destroyed")) {
     return {
-      label: "Connection cancelled",
+      label: "连接已取消",
       detail,
     };
   }
 
   return {
-    label: "Couldn't connect",
+    label: "连接失败",
     detail,
   };
 }

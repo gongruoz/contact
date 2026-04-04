@@ -248,15 +248,22 @@ function drawEdgeGapped(
   ctx.lineTo(x2, y2);
 }
 
+export type SimplexDrawRole = "self" | "peer";
+
 export function drawSimplex(
   ctx: CanvasRenderingContext2D,
   s: Simplex,
   opacity: number,
+  role: SimplexDrawRole = "self",
 ) {
   if (opacity <= 0.01) return;
 
-  const hue = s._axis * 360;
-  const sat = 15 + s._amp * 25;
+  const strokeA = role === "self" ? opacity * 0.52 : opacity * 0.55;
+  const fillA = role === "self" ? opacity * 0.92 : opacity * 0.82;
+  const strokeStyle =
+    role === "self" ? `rgba(0,0,0,${strokeA})` : `rgba(178,178,182,${strokeA})`;
+  const fillStyle =
+    role === "self" ? `rgba(0,0,0,${fillA})` : `rgba(188,188,192,${fillA})`;
 
   ctx.beginPath();
   for (const c of s.constraints) {
@@ -264,8 +271,8 @@ export function drawSimplex(
     const pb = s.particles[c.b];
     drawEdgeGapped(ctx, pa.x, pa.y, pb.x, pb.y, NODE_GAP);
   }
-  ctx.strokeStyle = `hsla(${hue}, ${sat}%, 28%, ${opacity * 0.48})`;
-  ctx.lineWidth = 1.35;
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = role === "self" ? 1.35 : 1.2;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.stroke();
@@ -273,7 +280,7 @@ export function drawSimplex(
   for (const p of s.particles) {
     ctx.beginPath();
     ctx.arc(p.x, p.y, NODE_R, 0, Math.PI * 2);
-    ctx.fillStyle = `hsla(${hue}, ${sat}%, 22%, ${opacity * 0.8})`;
+    ctx.fillStyle = fillStyle;
     ctx.fill();
   }
 }
@@ -340,7 +347,7 @@ export function drawFusionEdges(
       if (lineAlpha < 0.01) continue;
       ctx.beginPath();
       drawEdgeGapped(ctx, ta.x, ta.y, tb.x, tb.y, NODE_GAP);
-      ctx.strokeStyle = `rgba(100, 85, 130, ${lineAlpha})`;
+      ctx.strokeStyle = `rgba(140, 140, 145, ${lineAlpha})`;
       ctx.lineWidth = 0.55;
       ctx.lineCap = "round";
       ctx.stroke();

@@ -21,7 +21,7 @@ export function showRoomCode(code: string) {
   btnCreate.classList.add("hidden");
   btnJoin.parentElement!.classList.add("hidden");
   clearPeerError();
-  statusEl.textContent = "waiting for player...";
+  statusEl.textContent = "等待对方加入…";
 }
 
 export function showConnected() {
@@ -34,7 +34,7 @@ export function showConnected() {
 
 export function showDisconnected() {
   clearPeerError();
-  statusEl.textContent = "disconnected";
+  statusEl.textContent = "已断开连接";
   statusEl.style.opacity = "1";
   setTimeout(() => { statusEl.style.opacity = "0.4"; }, 2000);
 }

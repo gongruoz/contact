@@ -143,10 +143,10 @@ function loop(time: number) {
   const h = window.innerHeight;
   ctx.clearRect(0, 0, w, h);
 
-  drawSimplex(ctx, selfSimplex, 1);
+  drawSimplex(ctx, selfSimplex, 1, "self");
 
   if (connected && peerFeatures) {
-    drawSimplex(ctx, peerSimplex, 1);
+    drawSimplex(ctx, peerSimplex, 1, "peer");
     drawFusionEdges(ctx, selfSimplex, peerSimplex, similarity);
   }
 
@@ -155,25 +155,25 @@ function loop(time: number) {
 
 async function init() {
   if (isMobile()) {
-    setHint("tap to start, then move your phone");
+    setHint("轻点屏幕以开启，然后摇动设备");
     const startOnTap = async () => {
       document.removeEventListener("click", startOnTap);
       const ok = await requestMotionPermission();
       if (!ok) {
-        setHint("motion permission denied");
+        setHint("未获得运动与方向权限");
         return;
       }
-      setHint("move your phone");
+      setHint("摇动手机或平板");
       startSensor(onSensorSample);
     };
     document.addEventListener("click", startOnTap);
   } else {
-    setHint("move your mouse");
+    setHint("移动鼠标");
     startSensor(onSensorSample);
   }
 
   onCreateRoom(async () => {
-    setStatus("connecting...");
+    setStatus("正在创建房间…");
     try {
       const code = await createRoom();
       showRoomCode(code);
@@ -185,7 +185,7 @@ async function init() {
   });
 
   onJoinRoom(async (code) => {
-    setStatus("joining...");
+    setStatus("正在加入…");
     try {
       await joinRoom(code);
     } catch (e) {
