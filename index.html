@@ -1,15 +1,17 @@
 <!DOCTYPE html>
-<html lang="zh-Hans">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>运动接触</title>
+  <title>Contact</title>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       width: 100%; height: 100%; overflow: hidden; background: #fff;
       font-family: "PingFang SC", "PingFang TC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       font-weight: 300;
+      font-size: clamp(13px, 3.4vw, 15px);
+      letter-spacing: 0.06em;
       -webkit-font-smoothing: antialiased;
     }
     canvas#gl {
@@ -22,64 +24,152 @@
       pointer-events: none; color: #333;
     }
     #ui .interactive { pointer-events: auto; }
-    /* 文案固定在上下，避开画面中央的 simplex */
+
     #hint {
       position: fixed;
       top: max(1.1rem, env(safe-area-inset-top, 0px));
-      left: 50%;
-      transform: translateX(-50%);
+      left: 50%; transform: translateX(-50%);
       width: min(92vw, 22rem);
       text-align: center;
-      font-size: 0.88rem;
+      font-size: inherit;
       font-weight: 300;
-      letter-spacing: 0.04em;
+      letter-spacing: inherit;
       opacity: 0.5;
       line-height: 1.45;
       transition: opacity 0.8s;
     }
+
     #connect-area {
       position: fixed;
-      bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
-      left: 50%;
-      transform: translateX(-50%);
-      width: min(92vw, 22rem);
+      bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
+      left: 50%; transform: translateX(-50%);
+      width: min(96vw, 26rem);
       display: flex; flex-direction: column;
-      align-items: center; gap: 0.65rem;
+      align-items: center;
+      gap: 0.5rem;
     }
-    button {
-      font-family: inherit; font-weight: 300;
-      background: rgba(0,0,0,0.04); color: #333;
-      border: 1px solid rgba(0,0,0,0.12); border-radius: 6px;
-      padding: 0.45rem 1.35rem; font-size: 0.88rem; cursor: pointer;
-      transition: background 0.2s;
-    }
-    button:hover { background: rgba(0,0,0,0.07); }
-    input#room-input {
-      font-family: inherit; font-weight: 300;
-      background: rgba(0,0,0,0.03); color: #333; text-align: center;
-      border: 1px solid rgba(0,0,0,0.12); border-radius: 6px;
-      padding: 0.45rem 0.85rem; font-size: 1.05rem; width: 7.5rem;
-      letter-spacing: 0.28em; outline: none;
-    }
-    input#room-input::placeholder { color: rgba(0,0,0,0.22); font-weight: 300; }
-    #room-code {
-      font-size: 1.65rem; letter-spacing: 0.35em; font-weight: 300;
-      opacity: 0.75; user-select: all; color: #222;
-    }
-    #status-wrap {
+
+    #tagline {
+      font-size: inherit;
+      font-weight: 300;
+      letter-spacing: inherit;
+      color: #555;
       text-align: center;
-      max-width: min(90vw, 22rem);
+      line-height: 1.5;
+      margin-bottom: 1.75rem;
+      width: 100%;
+      padding: 0 0.25rem;
     }
+
+    #tagline .tagline-line1 {
+      display: block;
+      white-space: nowrap;
+    }
+
+    #tagline .tagline-line2 {
+      display: block;
+      margin-top: 0.35em;
+    }
+
+    .ui-btn {
+      appearance: none;
+      -webkit-appearance: none;
+      font-family: inherit;
+      font-weight: 300;
+      font-size: inherit;
+      letter-spacing: inherit;
+      background: #fff;
+      color: #333;
+      border: 1px solid rgba(0,0,0,0.22);
+      border-radius: 0;
+      padding: 0.55rem 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .ui-btn:hover {
+      background: #fafafa;
+      border-color: rgba(0,0,0,0.32);
+    }
+
+    #btn-create {
+      width: 100%;
+      max-width: 18rem;
+    }
+
+    .join-row {
+      display: flex;
+      align-items: stretch;
+      width: 100%;
+      max-width: 18rem;
+      gap: 0;
+    }
+
+    .join-row .ui-field {
+      flex: 1 1 50%;
+      min-width: 0;
+    }
+
+    .ui-field {
+      font-family: inherit;
+      font-weight: 300;
+      font-size: inherit;
+      letter-spacing: inherit;
+      background: #fff;
+      color: #333;
+      border: 1px solid rgba(0,0,0,0.22);
+      border-radius: 0;
+      padding: 0.55rem 0.85rem;
+      text-align: center;
+      outline: none;
+    }
+
+    .join-row .ui-field:first-child {
+      border-right: none;
+    }
+    .join-row .ui-field:last-child {
+      border-left: 1px solid rgba(0,0,0,0.22);
+    }
+
+    .ui-field::placeholder {
+      color: rgba(0,0,0,0.35);
+      font-weight: 300;
+      letter-spacing: inherit;
+    }
+
+    #room-code {
+      font-size: inherit;
+      font-weight: 300;
+      letter-spacing: inherit;
+      opacity: 0.8;
+      user-select: all;
+      color: #222;
+      text-align: center;
+      width: 100%;
+      max-width: 18rem;
+      padding: 0.55rem 0.85rem;
+      border: 1px solid rgba(0,0,0,0.22);
+      background: #fff;
+    }
+
+    #status-wrap { text-align: center; max-width: min(90vw, 22rem); }
     #status {
-      font-size: 0.75rem; font-weight: 300;
-      opacity: 0.45; margin-top: 0.25rem;
-      line-height: 1.4;
+      font-size: inherit;
+      font-weight: 300;
+      letter-spacing: inherit;
+      opacity: 0.45;
+      margin-top: 0.15rem;
+      line-height: 1.45;
     }
     #status.peer-error { opacity: 0.88; color: #522; }
     #status-detail.peer-error-detail {
-      font-size: 0.65rem; font-weight: 300;
-      opacity: 0.62; margin-top: 0.3rem;
-      white-space: pre-wrap; word-break: break-word;
+      font-size: inherit;
+      font-weight: 300;
+      letter-spacing: inherit;
+      opacity: 0.62;
+      margin-top: 0.25rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
     .hidden { display: none !important; }
   </style>
@@ -87,12 +177,13 @@
 <body>
   <canvas id="gl"></canvas>
   <div id="ui">
-    <div id="hint" class="interactive">移动鼠标</div>
+    <div id="hint" class="interactive">move your mouse — make it dance</div>
     <div id="connect-area" class="interactive">
-      <button id="btn-create" type="button">创建房间</button>
-      <div style="display:flex;gap:0.45rem;align-items:center;">
-        <input id="room-input" maxlength="4" placeholder="房间码" inputmode="text" autocomplete="off" />
-        <button id="btn-join" type="button">加入</button>
+      <div id="tagline"><span class="tagline-line1">show how you move · feel how they move</span><span class="tagline-line2">sync up to make contact</span></div>
+      <button id="btn-create" class="ui-btn" type="button">create room</button>
+      <div class="join-row">
+        <input id="room-input" class="ui-field" maxlength="4" placeholder="code" inputmode="text" autocomplete="off" />
+        <button id="btn-join" class="ui-btn ui-field" type="button">join</button>
       </div>
       <div id="room-code" class="hidden"></div>
       <div id="status-wrap">

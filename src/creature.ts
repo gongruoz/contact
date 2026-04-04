@@ -1,355 +1,381 @@
 import type { Features } from "./dsp";
 
-// --------------- Verlet (Euclidean plane, no torus) ---------------
+// ---- Verlet particle simulation (Euclidean) ----
 
 interface Particle {
-  x: number;
-  y: number;
-  px: number;
-  py: number;
-  fx: number;
-  fy: number;
+  x: number; y: number;
+  px: number; py: number;
+  fx: number; fy: number;
   depth: number;
 }
 
 interface Constraint {
-  a: number;
-  b: number;
+  a: number; b: number;
   rest: number;
+  baseRest: number;
   stiffness: number;
+  isDiag: boolean;
 }
 
 export interface Simplex {
   particles: Particle[];
   constraints: Constraint[];
-  /** World anchor: center of mass is locked here; structure does not drift with motion */
-  cx: number;
-  cy: number;
+  cx: number; cy: number;
   phase: number;
-  _amp: number;
-  _freq: number;
-  _axis: number;
-  _smooth: number;
+  _amp: number; _freq: number; _axis: number; _smooth: number;
 }
 
-function makeParticle(x: number, y: number, depth: number): Particle {
-  return { x, y, px: x, py: y, fx: 0, fy: 0, depth };
+export interface MergePair {
+  si: number;
+  pi: number;
+  strength: number;
 }
 
-// --------------- Four nodes, cycle only (edges can cross when twisted) ---------------
+function mkP(x: number, y: number): Particle {
+  return { x, y, px: x, py: y, fx: 0, fy: 0, depth: 0 };
+}
 
 const N = 4;
-/** Initial radius from anchor — large enough to read */
-const R0 = 102;
+const R0 = 88;
 
 export function createSimplex(cx: number, cy: number): Simplex {
-  const particles: Particle[] = [];
-  const constraints: Constraint[] = [];
+  const ps: Particle[] = [];
+  const cs: Constraint[] = [];
 
   for (let i = 0; i < N; i++) {
-    const ang = (i / N) * Math.PI * 2 - Math.PI / 2;
-    const px = cx + Math.cos(ang) * R0;
-    const py = cy + Math.sin(ang) * R0;
-    particles.push(makeParticle(px, py, 0));
+    const a = (i / N) * Math.PI * 2 - Math.PI / 2;
+    ps.push(mkP(cx + Math.cos(a) * R0, cy + Math.sin(a) * R0));
   }
 
   for (let i = 0; i < N; i++) {
-    const a = i;
-    const b = (i + 1) % N;
-    const pa = particles[a];
-    const pb = particles[b];
-    const d0 = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-    constraints.push({ a, b, rest: d0, stiffness: 0.22 });
+    const a = i, b = (i + 1) % N;
+    const d = Math.hypot(ps[b].x - ps[a].x, ps[b].y - ps[a].y);
+    cs.push({ a, b, rest: d, baseRest: d, stiffness: 0.10, isDiag: false });
+  }
+
+  for (const [a, b] of [[0, 2], [1, 3]] as [number, number][]) {
+    const d = Math.hypot(ps[b].x - ps[a].x, ps[b].y - ps[a].y);
+    cs.push({ a, b, rest: d, baseRest: d, stiffness: 0.035, isDiag: true });
   }
 
   return {
-    particles, constraints, cx, cy,
+    particles: ps, constraints: cs, cx, cy,
     phase: Math.random() * Math.PI * 2,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
   };
 }
 
-/** Keep centroid on anchor — motion never translates the whole figure */
-function lockCenterOfMass(s: Simplex) {
-  const ps = s.particles;
-  let mx = 0;
-  let my = 0;
-  for (const p of ps) {
-    mx += p.x;
-    my += p.y;
-  }
-  mx /= ps.length;
-  my /= ps.length;
-  const dx = s.cx - mx;
-  const dy = s.cy - my;
-  for (const p of ps) {
-    p.x += dx;
-    p.y += dy;
-    p.px += dx;
-    p.py += dy;
-  }
+// ---- Physics helpers ----
+
+function comXY(ps: Particle[]) {
+  let x = 0, y = 0;
+  for (const p of ps) { x += p.x; y += p.y; }
+  const n = ps.length;
+  return { x: x / n, y: y / n };
 }
 
-const DAMPING_BASE = 0.988;
-const ACC_SCALE = 7200;
-
-function integrateParticles(s: Simplex, dt: number) {
-  const acc = dt * dt * ACC_SCALE;
+function lockCOM(s: Simplex) {
+  const { x: mx, y: my } = comXY(s.particles);
+  const dx = s.cx - mx, dy = s.cy - my;
   for (const p of s.particles) {
-    const vx = (p.x - p.px) * DAMPING_BASE;
-    const vy = (p.y - p.py) * DAMPING_BASE;
-    p.px = p.x;
-    p.py = p.y;
-    p.x += vx + p.fx * acc;
-    p.y += vy + p.fy * acc;
-    p.fx = 0;
-    p.fy = 0;
+    p.x += dx; p.y += dy;
+    p.px += dx; p.py += dy;
   }
 }
 
-function solveConstraints(s: Simplex, iterations: number) {
-  for (let iter = 0; iter < iterations; iter++) {
+const DAMP = 0.955;
+const ACC = 4200;
+
+function integrate(s: Simplex, dt: number) {
+  const a = dt * dt * ACC;
+  const d = DAMP - s._smooth * 0.06;
+  for (const p of s.particles) {
+    const vx = (p.x - p.px) * d;
+    const vy = (p.y - p.py) * d;
+    p.px = p.x; p.py = p.y;
+    p.x += vx + p.fx * a;
+    p.y += vy + p.fy * a;
+    p.fx = 0; p.fy = 0;
+  }
+}
+
+function solve(s: Simplex, iter: number) {
+  for (let k = 0; k < iter; k++) {
     for (const c of s.constraints) {
-      const pa = s.particles[c.a];
-      const pb = s.particles[c.b];
-      let dx = pb.x - pa.x;
-      let dy = pb.y - pa.y;
+      const pa = s.particles[c.a], pb = s.particles[c.b];
+      const dx = pb.x - pa.x, dy = pb.y - pa.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
       const diff = (dist - c.rest) / dist;
-      const moveX = dx * diff * c.stiffness * 0.5;
-      const moveY = dy * diff * c.stiffness * 0.5;
-      pa.x += moveX;
-      pa.y += moveY;
-      pb.x -= moveX;
-      pb.y -= moveY;
+      const h = c.stiffness * 0.5;
+      pa.x += dx * diff * h; pa.y += dy * diff * h;
+      pb.x -= dx * diff * h; pb.y -= dy * diff * h;
     }
   }
 }
 
-/** Edge rest lengths breathe slowly toward current span — soft, twist-friendly */
-function adaptRestLengths(s: Simplex) {
+function adaptRest(s: Simplex) {
   for (const c of s.constraints) {
-    const pa = s.particles[c.a];
-    const pb = s.particles[c.b];
+    const pa = s.particles[c.a], pb = s.particles[c.b];
     const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-    c.rest += (d - c.rest) * 0.04;
+    const rate = c.isDiag ? 0.015 : 0.10;
+    const lo = c.baseRest * 0.35, hi = c.baseRest * 2.5;
+    const target = Math.max(lo, Math.min(hi, d));
+    c.rest += (target - c.rest) * rate;
   }
 }
 
-function com(s: Simplex) {
-  let mx = 0;
-  let my = 0;
+function spreadPressure(s: Simplex) {
+  const { x: cx, y: cy } = comXY(s.particles);
+  const minR = R0 * 0.28;
   for (const p of s.particles) {
-    mx += p.x;
-    my += p.y;
+    const dx = p.x - cx, dy = p.y - cy;
+    const d = Math.hypot(dx, dy);
+    if (d < minR && d > 0.01) {
+      const push = ((minR - d) / minR) * 0.45;
+      p.fx += (dx / d) * push;
+      p.fy += (dy / d) * push;
+    }
   }
-  const n = s.particles.length;
-  return { x: mx / n, y: my / n };
 }
+
+function edgeMinLength(s: Simplex) {
+  const minLen = R0 * 0.22;
+  for (const c of s.constraints) {
+    if (c.isDiag) continue;
+    const pa = s.particles[c.a], pb = s.particles[c.b];
+    const dx = pb.x - pa.x, dy = pb.y - pa.y;
+    const d = Math.hypot(dx, dy);
+    if (d < minLen && d > 0.01) {
+      const push = ((minLen - d) / minLen) * 0.3;
+      const nx = dx / d, ny = dy / d;
+      pa.fx -= nx * push; pa.fy -= ny * push;
+      pb.fx += nx * push; pb.fy += ny * push;
+    }
+  }
+}
+
+// ---- Drive (sensor → organic forces) ----
 
 export function driveSimplex(
-  s: Simplex,
-  features: Features,
-  rawAx: number,
-  rawAy: number,
+  s: Simplex, f: Features,
+  rawAx: number, rawAy: number,
   dt: number,
 ) {
-  const lerpRate = 0.08;
-  s._amp += (features.amplitude - s._amp) * lerpRate;
-  s._freq += (features.frequency - s._freq) * lerpRate;
-  s._axis += (features.axis - s._axis) * lerpRate;
-  s._smooth += (features.smoothness - s._smooth) * lerpRate;
+  const lr = 0.065;
+  s._amp += (f.amplitude - s._amp) * lr;
+  s._freq += (f.frequency - s._freq) * lr;
+  s._axis += (f.axis - s._axis) * lr;
+  s._smooth += (f.smoothness - s._smooth) * lr;
 
-  const stiffMul = 0.18 + s._smooth * 0.55;
-  for (const c of s.constraints) {
-    c.stiffness = stiffMul;
-  }
+  const eStiff = 0.06 + s._smooth * 0.10;
+  const dStiff = 0.02 + s._smooth * 0.04;
+  for (const c of s.constraints) c.stiffness = c.isDiag ? dStiff : eStiff;
 
-  const dirAngle = s._axis * Math.PI;
-  const speed = 0.55 + s._freq * 4.5;
-  s.phase += speed * dt;
-  const osc = Math.sin(s.phase);
+  const spd = 0.35 + s._freq * 3.0;
+  s.phase += spd * dt;
 
-  const { x: cx, y: cy } = com(s);
-
-  const forceMag = s._amp * 0.95;
-  // Tangential unit from (rawAx, rawAy) — twist, zero net linear push on COM
-  const rawLen = Math.hypot(rawAx, rawAy) || 1e-8;
-  const tx = -rawAy / rawLen;
-  const ty = rawAx / rawLen;
+  const { x: cx, y: cy } = comXY(s.particles);
+  const amp = s._amp;
+  const dir = s._axis * Math.PI;
 
   for (let i = 0; i < N; i++) {
     const p = s.particles[i];
-    const rx = p.x - cx;
-    const ry = p.y - cy;
+    const rx = p.x - cx, ry = p.y - cy;
     const rl = Math.hypot(rx, ry) || 1e-8;
-    const ux = rx / rl;
-    const uy = ry / rl;
-    // radial breathing (alternating)
-    const phase = (i / N) * Math.PI * 2;
-    const rad = osc * forceMag * Math.cos(s.phase * 0.5 + phase);
-    p.fx += ux * rad;
-    p.fy += uy * rad;
-    // twist: tangential to orbit, driven by sensor
-    const twist = (tx * -uy + ty * ux) * rawLen * 2.8;
-    p.fx += -uy * twist;
-    p.fy += ux * twist;
-    // axis-aligned oscillation (choreographic)
-    p.fx += Math.cos(dirAngle) * osc * forceMag * 0.35;
-    p.fy += Math.sin(dirAngle) * osc * forceMag * 0.35;
+    const ux = rx / rl, uy = ry / rl;
+    const off = (i / N) * Math.PI * 2;
+
+    const b1 = (0.07 + amp * 0.45) * Math.sin(s.phase + off);
+    const b2 = (0.025 + amp * 0.15) * Math.sin(s.phase * 1.618 + off * 0.7 + 0.4);
+    p.fx += ux * (b1 + b2);
+    p.fy += uy * (b1 + b2);
+
+    const dot = ux * Math.cos(dir) + uy * Math.sin(dir);
+    const stretch = dot * amp * 0.22 * Math.sin(s.phase * 0.75 + 0.6);
+    p.fx += ux * stretch;
+    p.fy += uy * stretch;
+
+    const w1 = 0.035 * Math.sin(s.phase * 0.11 + i * 1.3);
+    const w2 = 0.02 * Math.cos(s.phase * 0.073 + i * 2.2);
+    p.fx += -uy * w1 + ux * w2;
+    p.fy += ux * w1 + uy * w2;
   }
 
-  const breath = 0.1 * (1 - s._amp * 0.8);
-  for (let i = 0; i < N; i++) {
-    const p = s.particles[i];
-    const rx = p.x - cx;
-    const ry = p.y - cy;
-    const rl = Math.hypot(rx, ry) || 1;
-    const ux = rx / rl;
-    const uy = ry / rl;
-    const bp = s.phase * 0.15 + i * 0.9;
-    p.fx += ux * Math.sin(bp) * breath;
-    p.fy += uy * Math.sin(bp) * breath;
+  const rawLen = Math.hypot(rawAx, rawAy);
+  if (rawLen > 0.015) {
+    const inv = 1 / rawLen;
+    const tx = -rawAy * inv, ty = rawAx * inv;
+    for (let i = 0; i < N; i++) {
+      const p = s.particles[i];
+      const rx = p.x - cx, ry = p.y - cy;
+      const rl = Math.hypot(rx, ry) || 1e-8;
+      const ux = rx / rl, uy = ry / rl;
+      const tw = (tx * -uy + ty * ux) * rawLen * 1.1;
+      p.fx += -uy * tw;
+      p.fy += ux * tw;
+    }
   }
 
-  adaptRestLengths(s);
-
-  integrateParticles(s, dt);
-  const constraintIter = s._smooth > 0.5 ? 6 : 5;
-  solveConstraints(s, constraintIter);
-  lockCenterOfMass(s);
+  spreadPressure(s);
+  edgeMinLength(s);
+  adaptRest(s);
+  integrate(s, dt);
+  solve(s, 5);
+  lockCOM(s);
 }
 
-// --------------- Rendering: gap between edge and dot (breathing line) ---------------
+// ---- Rendering ----
 
-const NODE_GAP = 6;
-const NODE_R = 4;
+const GAP = 6;
+const NR = 4;
 
-function drawEdgeGapped(
+function gappedLine(
   ctx: CanvasRenderingContext2D,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-  gap: number,
+  ax: number, ay: number, bx: number, by: number, gap: number,
 ) {
-  let dx = bx - ax;
-  let dy = by - ay;
+  let dx = bx - ax, dy = by - ay;
   const len = Math.hypot(dx, dy) || 1e-8;
-  dx /= len;
-  dy /= len;
+  dx /= len; dy /= len;
   const t = Math.max(0, len - 2 * gap);
   if (t < 1) return;
-  const x1 = ax + dx * gap;
-  const y1 = ay + dy * gap;
-  const x2 = ax + dx * (gap + t);
-  const y2 = ay + dy * (gap + t);
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
+  ctx.moveTo(ax + dx * gap, ay + dy * gap);
+  ctx.lineTo(ax + dx * (gap + t), ay + dy * (gap + t));
 }
 
-export type SimplexDrawRole = "self" | "peer";
+export type DrawRole = "self" | "peer";
 
 export function drawSimplex(
-  ctx: CanvasRenderingContext2D,
-  s: Simplex,
-  opacity: number,
-  role: SimplexDrawRole = "self",
+  ctx: CanvasRenderingContext2D, s: Simplex,
+  opacity: number, role: DrawRole = "self",
 ) {
   if (opacity <= 0.01) return;
 
-  const strokeA = role === "self" ? opacity * 0.52 : opacity * 0.55;
-  const fillA = role === "self" ? opacity * 0.92 : opacity * 0.82;
-  const strokeStyle =
-    role === "self" ? `rgba(0,0,0,${strokeA})` : `rgba(178,178,182,${strokeA})`;
-  const fillStyle =
-    role === "self" ? `rgba(0,0,0,${fillA})` : `rgba(188,188,192,${fillA})`;
+  const sA = role === "self" ? opacity * 0.52 : opacity * 0.55;
+  const fA = role === "self" ? opacity * 0.92 : opacity * 0.82;
+  const stroke = role === "self" ? `rgba(0,0,0,${sA})` : `rgba(178,178,182,${sA})`;
+  const fill = role === "self" ? `rgba(0,0,0,${fA})` : `rgba(188,188,192,${fA})`;
 
   ctx.beginPath();
   for (const c of s.constraints) {
-    const pa = s.particles[c.a];
-    const pb = s.particles[c.b];
-    drawEdgeGapped(ctx, pa.x, pa.y, pb.x, pb.y, NODE_GAP);
+    if (c.isDiag) continue;
+    const pa = s.particles[c.a], pb = s.particles[c.b];
+    gappedLine(ctx, pa.x, pa.y, pb.x, pb.y, GAP);
   }
-  ctx.strokeStyle = strokeStyle;
-  ctx.lineWidth = role === "self" ? 1.35 : 1.2;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = role === "self" ? 1.35 : 1.15;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
   ctx.stroke();
 
   for (const p of s.particles) {
     ctx.beginPath();
-    ctx.arc(p.x, p.y, NODE_R, 0, Math.PI * 2);
-    ctx.fillStyle = fillStyle;
+    ctx.arc(p.x, p.y, NR, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
     ctx.fill();
   }
 }
 
-// --------------- Fusion (pairwise nodes, Euclidean) ---------------
+// ---- Merge system ----
 
-export function applyFusion(a: Simplex, b: Simplex, similarity: number, dt: number) {
-  if (similarity < 0.22) return;
+const MERGE_ON   = [0.15, 0.35, 0.55, 0.78];
+const MERGE_FULL = [0.33, 0.53, 0.73, 0.92];
 
-  const strength = (similarity - 0.22) / 0.78;
-  const maxF = 0.05 * strength;
+export function computeMergePairs(
+  self: Simplex, peer: Simplex, similarity: number,
+): MergePair[] {
+  let count = 0;
+  for (let i = 0; i < N; i++) {
+    if (similarity >= MERGE_ON[i]) count = i + 1;
+  }
+  if (count === 0) return [];
 
-  for (const ta of a.particles) {
-    let best = Infinity;
-    let bestTb: Particle | null = null;
-    for (const tb of b.particles) {
-      const dx = tb.x - ta.x;
-      const dy = tb.y - ta.y;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < best) {
-        best = d2;
-        bestTb = tb;
+  const usedS = new Set<number>();
+  const usedP = new Set<number>();
+  const pairs: MergePair[] = [];
+
+  for (let k = 0; k < count; k++) {
+    let best = Infinity, bsi = -1, bpi = -1;
+    for (let si = 0; si < N; si++) {
+      if (usedS.has(si)) continue;
+      for (let pi = 0; pi < N; pi++) {
+        if (usedP.has(pi)) continue;
+        const dx = self.particles[si].x - peer.particles[pi].x;
+        const dy = self.particles[si].y - peer.particles[pi].y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < best) { best = d2; bsi = si; bpi = pi; }
       }
     }
-    if (!bestTb) continue;
-    const dist = Math.sqrt(best) || 1;
-    const f = Math.min(maxF, maxF / (dist * 0.012 + 1));
-    const dx = bestTb.x - ta.x;
-    const dy = bestTb.y - ta.y;
-    const nx = dx / dist;
-    const ny = dy / dist;
-    ta.fx += nx * f;
-    ta.fy += ny * f;
-    bestTb.fx -= nx * f * 0.4;
-    bestTb.fy -= ny * f * 0.4;
+    if (bsi < 0) break;
+    usedS.add(bsi); usedP.add(bpi);
+    const on = MERGE_ON[k], full = MERGE_FULL[k];
+    const str = Math.min(1, Math.max(0, (similarity - on) / (full - on)));
+    pairs.push({ si: bsi, pi: bpi, strength: str });
   }
-
-  integrateParticles(a, dt);
-  integrateParticles(b, dt);
-  const it = a._smooth > 0.5 ? 5 : 4;
-  solveConstraints(a, it);
-  solveConstraints(b, it);
-  lockCenterOfMass(a);
-  lockCenterOfMass(b);
+  return pairs;
 }
 
-export function drawFusionEdges(
-  ctx: CanvasRenderingContext2D,
-  a: Simplex,
-  b: Simplex,
-  similarity: number,
+export function applyFusion(
+  self: Simplex, peer: Simplex,
+  pairs: MergePair[], dt: number,
 ) {
-  if (similarity < 0.32) return;
-  const alpha = (similarity - 0.32) / 0.68;
-  const maxDist = 220;
+  if (pairs.length === 0) return;
 
-  for (const ta of a.particles) {
-    for (const tb of b.particles) {
-      const dx = tb.x - ta.x;
-      const dy = tb.y - ta.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > maxDist) continue;
-      const lineAlpha = alpha * (1 - dist / maxDist) * 0.28;
-      if (lineAlpha < 0.01) continue;
+  for (const { si, pi, strength } of pairs) {
+    if (strength < 0.01) continue;
+    const sp = self.particles[si], pp = peer.particles[pi];
+    const dx = pp.x - sp.x, dy = pp.y - sp.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = dx / dist, ny = dy / dist;
+    const f = strength * 0.12;
+    sp.fx += nx * f; sp.fy += ny * f;
+    pp.fx -= nx * f; pp.fy -= ny * f;
+  }
+
+  integrate(self, dt);
+  integrate(peer, dt);
+  solve(self, 3);
+  solve(peer, 3);
+  lockCOM(self);
+  lockCOM(peer);
+}
+
+export function drawMergeEffects(
+  ctx: CanvasRenderingContext2D,
+  self: Simplex, peer: Simplex,
+  pairs: MergePair[], time: number,
+) {
+  for (const { si, pi, strength } of pairs) {
+    if (strength < 0.03) continue;
+    const sp = self.particles[si], pp = peer.particles[pi];
+    const dx = pp.x - sp.x, dy = pp.y - sp.y;
+    const dist = Math.hypot(dx, dy);
+
+    const threadAlpha = strength * 0.35;
+    if (threadAlpha > 0.01 && dist > GAP * 2) {
       ctx.beginPath();
-      drawEdgeGapped(ctx, ta.x, ta.y, tb.x, tb.y, NODE_GAP);
-      ctx.strokeStyle = `rgba(140, 140, 145, ${lineAlpha})`;
-      ctx.lineWidth = 0.55;
+      gappedLine(ctx, sp.x, sp.y, pp.x, pp.y, GAP);
+      ctx.strokeStyle = `rgba(100, 100, 105, ${threadAlpha})`;
+      ctx.lineWidth = 0.5 + strength * 0.8;
       ctx.lineCap = "round";
+      ctx.stroke();
+    }
+
+    const snapDist = 35;
+    if (dist < snapDist) {
+      const closeness = 1 - dist / snapDist;
+      const mx = (sp.x + pp.x) / 2, my = (sp.y + pp.y) / 2;
+      const alpha = closeness * strength * 0.65;
+      const r = NR * (1.4 + closeness * 1.2);
+
+      ctx.beginPath();
+      ctx.arc(mx, my, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(60, 60, 65, ${alpha})`;
+      ctx.fill();
+
+      const pulse = 1.15 + 0.15 * Math.sin(time * 0.005);
+      ctx.beginPath();
+      ctx.arc(mx, my, r * pulse, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(60, 60, 65, ${alpha * 0.35})`;
+      ctx.lineWidth = 0.6;
       ctx.stroke();
     }
   }

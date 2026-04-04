@@ -6,9 +6,11 @@ const roomInput = document.getElementById("room-input") as HTMLInputElement;
 const roomCodeEl = document.getElementById("room-code")!;
 const statusEl = document.getElementById("status")!;
 const statusDetailEl = document.getElementById("status-detail")!;
+const taglineEl = document.getElementById("tagline")!;
 
 export function setHint(text: string) {
   hint.textContent = text;
+  hint.style.opacity = "0.5";
 }
 
 export function fadeOutHint() {
@@ -20,8 +22,9 @@ export function showRoomCode(code: string) {
   roomCodeEl.classList.remove("hidden");
   btnCreate.classList.add("hidden");
   btnJoin.parentElement!.classList.add("hidden");
+  taglineEl.classList.add("hidden");
   clearPeerError();
-  statusEl.textContent = "等待对方加入…";
+  statusEl.textContent = "waiting for them to join…";
 }
 
 export function showConnected() {
@@ -34,7 +37,7 @@ export function showConnected() {
 
 export function showDisconnected() {
   clearPeerError();
-  statusEl.textContent = "已断开连接";
+  statusEl.textContent = "disconnected";
   statusEl.style.opacity = "1";
   setTimeout(() => { statusEl.style.opacity = "0.4"; }, 2000);
 }
@@ -45,16 +48,12 @@ function clearPeerError() {
   statusDetailEl.classList.add("hidden");
 }
 
-/** Plain status line (connecting… / joining…) */
 export function setStatus(text: string) {
   clearPeerError();
   statusEl.textContent = text;
   statusEl.style.opacity = "0.4";
 }
 
-/**
- * After a failed create/join: human label + optional technical line (dev or ?debug=1).
- */
 export function setPeerError(label: string, detail: string, showDetail: boolean) {
   statusEl.classList.add("peer-error");
   statusEl.textContent = label;
