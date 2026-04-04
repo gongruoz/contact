@@ -8,8 +8,6 @@ export interface SensorSample {
 export type SensorCallback = (s: SensorSample) => void;
 
 let cb: SensorCallback | null = null;
-let loggedMotionFail = false;
-let loggedMotionOk = false;
 
 const DM_OPTS: AddEventListenerOptions = { passive: true };
 
@@ -59,51 +57,12 @@ function onDeviceMotion(e: DeviceMotionEvent) {
         az = typeof ra === "number" && Number.isFinite(ra) ? ra : 0;
         source = "gyro";
       } else {
-        // #region agent log
-        if (!loggedMotionFail) {
-          loggedMotionFail = true;
-          fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-            body: JSON.stringify({
-              sessionId: "ab4e8d",
-              location: "sensor.ts:onDeviceMotion",
-              message: "no accel/gravity/gyro triplet",
-              data: {
-                hasLin: !!e.acceleration,
-                hasGrav: !!e.accelerationIncludingGravity,
-                hasRR: !!e.rotationRate,
-              },
-              timestamp: Date.now(),
-              hypothesisId: "H4",
-            }),
-          }).catch(() => {});
-        }
-        // #endregion
         return;
       }
     }
   }
 
   const ref = source === "gyro" ? RR_REF : PHONE_ACCEL_REF;
-  // #region agent log
-  if (!loggedMotionOk) {
-    loggedMotionOk = true;
-    fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-      body: JSON.stringify({
-        sessionId: "ab4e8d",
-        location: "sensor.ts:onDeviceMotion",
-        message: "devicemotion first sample",
-        data: { source },
-        timestamp: Date.now(),
-        hypothesisId: "H4",
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
-
   cb?.({
     ax: Math.tanh(ax / ref),
     ay: Math.tanh(ay / ref),
@@ -173,38 +132,9 @@ export async function requestMotionPermission(): Promise<boolean> {
   const DME = DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> };
   const hasMotionReq = typeof DeviceMotionEvent !== "undefined" && typeof DME.requestPermission === "function";
 
-  // #region agent log
-  fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-    body: JSON.stringify({
-      sessionId: "ab4e8d",
-      location: "sensor.ts:requestMotionPermission",
-      message: "permission branch",
-      data: { hasMotionReq },
-      timestamp: Date.now(),
-      hypothesisId: "H3",
-    }),
-  }).catch(() => {});
-  // #endregion
-
   if (hasMotionReq) {
     try {
       const perm = await DME.requestPermission!();
-      // #region agent log
-      fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-        body: JSON.stringify({
-          sessionId: "ab4e8d",
-          location: "sensor.ts:requestMotionPermission",
-          message: "DeviceMotion permission",
-          data: { perm },
-          timestamp: Date.now(),
-          hypothesisId: "H3",
-        }),
-      }).catch(() => {});
-      // #endregion
       return perm === "granted";
     } catch {
       return false;
@@ -215,23 +145,7 @@ export async function requestMotionPermission(): Promise<boolean> {
 
 export function startSensor(callback: SensorCallback) {
   cb = callback;
-  loggedMotionFail = false;
-  loggedMotionOk = false;
   const mobile = isMobile();
-  // #region agent log
-  fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-    body: JSON.stringify({
-      sessionId: "ab4e8d",
-      location: "sensor.ts:startSensor",
-      message: "listener branch",
-      data: { isMobile: mobile, mode: mobile ? "devicemotion" : "mousemove", secure: window.isSecureContext },
-      timestamp: Date.now(),
-      hypothesisId: "H1",
-    }),
-  }).catch(() => {});
-  // #endregion
   if (mobile) {
     window.addEventListener("devicemotion", onDeviceMotion, DM_OPTS);
   } else {

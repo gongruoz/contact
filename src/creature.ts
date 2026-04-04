@@ -41,7 +41,7 @@ function mkP(x: number, y: number): Particle {
 }
 
 const N = 4;
-const R0 = 88;
+const R0 = 100;
 
 export function createSimplex(cx: number, cy: number): Simplex {
   const ps: Particle[] = [];
@@ -108,8 +108,8 @@ function rotateAroundAnchor(s: Simplex, ax: number, ay: number, dTheta: number) 
 const DAMP = 0.955;
 const ACC = 4200;
 
-function integrate(s: Simplex, dt: number) {
-  const a = dt * dt * ACC;
+function integrate(s: Simplex, dt: number, impulseMul = 1) {
+  const a = dt * dt * ACC * impulseMul;
   const d = DAMP - s._smooth * 0.06;
   for (const p of s.particles) {
     const vx = (p.x - p.px) * d;
@@ -189,31 +189,35 @@ export function driveSimplex(
   s._axis += (f.axis - s._axis) * lr;
   s._smooth += (f.smoothness - s._smooth) * lr;
 
-  const eStiff = 0.06 + s._smooth * 0.10;
-  const dStiff = 0.02 + s._smooth * 0.04;
-  for (const c of s.constraints) c.stiffness = c.isDiag ? dStiff : eStiff;
-
   const spd = 0.35 + s._freq * 3.0;
   s.phase += spd * dt;
 
   const rawLenEarly = Math.hypot(rawAx, rawAy);
   const amp = s._amp;
-  const express = 0.35 + amp * 0.65;
-  const maxLean = 46 * express;
+  const motionMag = Math.min(1, rawLenEarly * 1.2);
+  const express = Math.max(0.35, Math.min(1.45, 0.38 + amp * 0.42 + motionMag * 0.55));
+
+  const edgeScale = 1 - 0.22 * motionMag;
+  const diagScale = 1 - 0.18 * motionMag;
+  const eStiff = Math.max(0.028, (0.055 + s._smooth * 0.09) * edgeScale);
+  const dStiff = Math.max(0.012, (0.018 + s._smooth * 0.036) * diagScale);
+  for (const c of s.constraints) c.stiffness = c.isDiag ? dStiff : eStiff;
+
+  const maxLean = 82 * express;
   const leanTx = rawAx * maxLean;
   const leanTy = rawAy * maxLean;
-  const leanK = 0.11;
+  const leanK = 0.155;
   s.leanX += (leanTx - s.leanX) * leanK;
   s.leanY += (leanTy - s.leanY) * leanK;
 
   let tiltTarget = 0;
-  if (rawLenEarly > 0.04) {
-    tiltTarget = Math.atan2(rawAy, rawAx) * 0.32;
-    const lim = 0.62;
+  if (rawLenEarly > 0.02) {
+    tiltTarget = Math.atan2(rawAy, rawAx) * 0.5;
+    const lim = 0.88;
     tiltTarget = Math.max(-lim, Math.min(lim, tiltTarget));
   }
   const prevTilt = s.tiltSmoothed;
-  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.11;
+  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.14;
   const dTilt = s.tiltSmoothed - prevTilt;
 
   const { x: cx, y: cy } = comXY(s.particles);
@@ -226,13 +230,13 @@ export function driveSimplex(
     const ux = rx / rl, uy = ry / rl;
     const off = (i / N) * Math.PI * 2;
 
-    const b1 = (0.07 + amp * 0.45) * Math.sin(s.phase + off);
-    const b2 = (0.025 + amp * 0.15) * Math.sin(s.phase * 1.618 + off * 0.7 + 0.4);
+    const b1 = (0.10 + amp * 0.48 + motionMag * 0.38) * Math.sin(s.phase + off);
+    const b2 = (0.028 + amp * 0.18 + motionMag * 0.12) * Math.sin(s.phase * 1.618 + off * 0.7 + 0.4);
     p.fx += ux * (b1 + b2);
     p.fy += uy * (b1 + b2);
 
     const dot = ux * Math.cos(dir) + uy * Math.sin(dir);
-    const stretch = dot * amp * 0.22 * Math.sin(s.phase * 0.75 + 0.6);
+    const stretch = dot * (amp * 0.26 + motionMag * 0.14) * Math.sin(s.phase * 0.75 + 0.6);
     p.fx += ux * stretch;
     p.fy += uy * stretch;
 
@@ -243,29 +247,34 @@ export function driveSimplex(
   }
 
   const rawLen = rawLenEarly;
-  if (rawLen > 0.015) {
+  if (rawLen > 0.008) {
     const inv = 1 / rawLen;
     const tx = -rawAy * inv, ty = rawAx * inv;
     const mx = rawAx * inv, my = rawAy * inv;
+    const px = -my, py = mx;
     for (let i = 0; i < N; i++) {
       const p = s.particles[i];
       const rx = p.x - cx, ry = p.y - cy;
       const rl = Math.hypot(rx, ry) || 1e-8;
       const ux = rx / rl, uy = ry / rl;
-      const tw = (tx * -uy + ty * ux) * rawLen * 1.1;
+      const tw = (tx * -uy + ty * ux) * rawLen * (1.35 + motionMag * 1.1);
       p.fx += -uy * tw;
       p.fy += ux * tw;
       const align = Math.max(0, ux * mx + uy * my);
-      const reach = align * rawLen * (0.18 + amp * 0.5) * express;
+      const reach = align * rawLen * (0.32 + amp * 0.65) * express;
       p.fx += mx * reach;
       p.fy += my * reach;
+      const side = ux * px + uy * py;
+      const squash = side * rawLen * 0.62 * express;
+      p.fx += px * squash;
+      p.fy += py * squash;
     }
   }
 
   spreadPressure(s);
   edgeMinLength(s);
   adaptRest(s);
-  integrate(s, dt);
+  integrate(s, dt, 1 + motionMag * 0.9);
   solve(s, 5);
   lockCOM(s);
   rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);

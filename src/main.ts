@@ -22,11 +22,6 @@ let connected = false;
 let latestRawAx = 0;
 let latestRawAy = 0;
 
-/** Debug overlay (session ab4e8d) — motion recv counter for phone verification */
-let debugOverlayEl: HTMLDivElement | null = null;
-let debugOverlayBase = "";
-let debugMotionSamples = 0;
-
 let selfSimplex: Simplex;
 let peerSimplex: Simplex;
 
@@ -74,12 +69,6 @@ function onSensorSample(s: SensorSample) {
   pushSample(s);
   latestRawAx = s.ax;
   latestRawAy = s.ay;
-  debugMotionSamples += 1;
-  if (debugOverlayEl && (debugMotionSamples === 1 || debugMotionSamples % 45 === 0)) {
-    debugOverlayEl.textContent =
-      debugOverlayBase +
-      `\nrecv=${debugMotionSamples} ax=${s.ax.toFixed(2)} ay=${s.ay.toFixed(2)}`;
-  }
 }
 
 let lastSend = 0;
@@ -187,43 +176,6 @@ function loop(time: number) {
 }
 
 async function init() {
-  // #region agent log — on-screen debug for phones
-  const _dbg = {
-    mobile: isMobile(),
-    secure: window.isSecureContext,
-    tp: navigator.maxTouchPoints,
-    coarse: window.matchMedia?.("(pointer: coarse)")?.matches,
-    ua: navigator.userAgent.slice(0, 120),
-    hasDM: typeof DeviceMotionEvent !== "undefined",
-    hasReqPerm:
-      typeof DeviceMotionEvent !== "undefined" &&
-      typeof (DeviceMotionEvent as any).requestPermission === "function",
-    platform: navigator.platform,
-  };
-  debugOverlayBase = JSON.stringify(_dbg);
-  const _dbgEl = document.createElement("div");
-  _dbgEl.id = "dbg-overlay";
-  debugOverlayEl = _dbgEl;
-  _dbgEl.style.cssText =
-    "position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(0,0,0,0.75);color:#0f0;" +
-    "font:11px/1.4 monospace;padding:8px 10px;white-space:pre-wrap;word-break:break-all;pointer-events:none";
-  _dbgEl.textContent = debugOverlayBase;
-  document.body.appendChild(_dbgEl);
-
-  fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-    body: JSON.stringify({
-      sessionId: "ab4e8d",
-      location: "main.ts:init",
-      message: "sensor path bootstrap",
-      data: _dbg,
-      timestamp: Date.now(),
-      hypothesisId: "H1",
-    }),
-  }).catch(() => {});
-  // #endregion
-
   if (isMobile()) {
     if (!window.isSecureContext) {
       setHint("use HTTPS — motion needs a secure page");
@@ -241,29 +193,11 @@ async function init() {
       if (ev.type === "pointerdown" && (ev as PointerEvent).button !== 0) return;
       started = true;
       detachGesture();
-      // #region agent log
-      fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-        body: JSON.stringify({
-          sessionId: "ab4e8d",
-          location: "main.ts:startOnTap",
-          message: "user gesture received",
-          data: { type: ev.type },
-          timestamp: Date.now(),
-          hypothesisId: "H2",
-        }),
-      }).catch(() => {});
-      debugOverlayBase += `\ntap=${ev.type}`;
-      if (debugOverlayEl) debugOverlayEl.textContent = debugOverlayBase;
-      // #endregion
       if (!window.isSecureContext) {
         setHint("use HTTPS — motion blocked");
         return;
       }
       const ok = await requestMotionPermission();
-      debugOverlayBase += `\nperm=${ok}`;
-      if (debugOverlayEl) debugOverlayEl.textContent = debugOverlayBase;
       if (!ok) {
         setHint("motion permission denied");
         return;
@@ -275,22 +209,6 @@ async function init() {
     window.addEventListener("touchend", startOnTap, true);
     window.addEventListener("click", startOnTap, true);
   } else {
-    // #region agent log
-    debugOverlayBase += "\npath=mouse";
-    if (debugOverlayEl) debugOverlayEl.textContent = debugOverlayBase;
-    fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-      body: JSON.stringify({
-        sessionId: "ab4e8d",
-        location: "main.ts:init",
-        message: "desktop sensor path (mousemove)",
-        data: {},
-        timestamp: Date.now(),
-        hypothesisId: "H1",
-      }),
-    }).catch(() => {});
-    // #endregion
     setHint("move your mouse — make it dance");
     startSensor(onSensorSample);
   }
