@@ -23,6 +23,11 @@ export interface Simplex {
   cx: number; cy: number;
   phase: number;
   _amp: number; _freq: number; _axis: number; _smooth: number;
+  /** Soft follow of input — whole body leans toward motion / cursor */
+  leanX: number;
+  leanY: number;
+  /** Smoothed tilt (rad); applied incrementally so shape mimics device tilt */
+  tiltSmoothed: number;
 }
 
 export interface MergePair {
@@ -62,6 +67,7 @@ export function createSimplex(cx: number, cy: number): Simplex {
     particles: ps, constraints: cs, cx, cy,
     phase: Math.random() * Math.PI * 2,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
+    leanX: 0, leanY: 0, tiltSmoothed: 0,
   };
 }
 
@@ -76,10 +82,26 @@ function comXY(ps: Particle[]) {
 
 function lockCOM(s: Simplex) {
   const { x: mx, y: my } = comXY(s.particles);
-  const dx = s.cx - mx, dy = s.cy - my;
+  const ax = s.cx + s.leanX;
+  const ay = s.cy + s.leanY;
+  const dx = ax - mx, dy = ay - my;
   for (const p of s.particles) {
     p.x += dx; p.y += dy;
     p.px += dx; p.py += dy;
+  }
+}
+
+function rotateAroundAnchor(s: Simplex, ax: number, ay: number, dTheta: number) {
+  if (Math.abs(dTheta) < 1e-7) return;
+  const c = Math.cos(dTheta);
+  const si = Math.sin(dTheta);
+  for (const p of s.particles) {
+    const rx = p.x - ax, ry = p.y - ay;
+    p.x = ax + rx * c - ry * si;
+    p.y = ay + rx * si + ry * c;
+    const rpx = p.px - ax, rpy = p.py - ay;
+    p.px = ax + rpx * c - rpy * si;
+    p.py = ay + rpx * si + rpy * c;
   }
 }
 
@@ -174,8 +196,27 @@ export function driveSimplex(
   const spd = 0.35 + s._freq * 3.0;
   s.phase += spd * dt;
 
-  const { x: cx, y: cy } = comXY(s.particles);
+  const rawLenEarly = Math.hypot(rawAx, rawAy);
   const amp = s._amp;
+  const express = 0.35 + amp * 0.65;
+  const maxLean = 46 * express;
+  const leanTx = rawAx * maxLean;
+  const leanTy = rawAy * maxLean;
+  const leanK = 0.11;
+  s.leanX += (leanTx - s.leanX) * leanK;
+  s.leanY += (leanTy - s.leanY) * leanK;
+
+  let tiltTarget = 0;
+  if (rawLenEarly > 0.04) {
+    tiltTarget = Math.atan2(rawAy, rawAx) * 0.32;
+    const lim = 0.62;
+    tiltTarget = Math.max(-lim, Math.min(lim, tiltTarget));
+  }
+  const prevTilt = s.tiltSmoothed;
+  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.11;
+  const dTilt = s.tiltSmoothed - prevTilt;
+
+  const { x: cx, y: cy } = comXY(s.particles);
   const dir = s._axis * Math.PI;
 
   for (let i = 0; i < N; i++) {
@@ -201,10 +242,11 @@ export function driveSimplex(
     p.fy += ux * w1 + uy * w2;
   }
 
-  const rawLen = Math.hypot(rawAx, rawAy);
+  const rawLen = rawLenEarly;
   if (rawLen > 0.015) {
     const inv = 1 / rawLen;
     const tx = -rawAy * inv, ty = rawAx * inv;
+    const mx = rawAx * inv, my = rawAy * inv;
     for (let i = 0; i < N; i++) {
       const p = s.particles[i];
       const rx = p.x - cx, ry = p.y - cy;
@@ -213,6 +255,10 @@ export function driveSimplex(
       const tw = (tx * -uy + ty * ux) * rawLen * 1.1;
       p.fx += -uy * tw;
       p.fy += ux * tw;
+      const align = Math.max(0, ux * mx + uy * my);
+      const reach = align * rawLen * (0.18 + amp * 0.5) * express;
+      p.fx += mx * reach;
+      p.fy += my * reach;
     }
   }
 
@@ -222,6 +268,7 @@ export function driveSimplex(
   integrate(s, dt);
   solve(s, 5);
   lockCOM(s);
+  rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);
 }
 
 // ---- Rendering ----

@@ -8,70 +8,106 @@ export interface SensorSample {
 export type SensorCallback = (s: SensorSample) => void;
 
 let cb: SensorCallback | null = null;
-let devicemotionLogged = false;
+let loggedMotionFail = false;
+let loggedMotionOk = false;
+
+const DM_OPTS: AddEventListenerOptions = { passive: true };
 
 /** m/s² — compress to ~[-1,1] so phone matches mouse tanh domain */
 const PHONE_ACCEL_REF = 2.2;
+/** rotationRate is deg/s in WebKit; scale to similar magnitude as accel */
+const RR_REF = 90;
+
+function accelTriplet(o: DeviceMotionEventAcceleration | null): [number, number, number] | null {
+  if (!o) return null;
+  const x = o.x;
+  const y = o.y;
+  const z = o.z;
+  if (x == null || y == null || z == null) return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+  return [x, y, z];
+}
 
 function onDeviceMotion(e: DeviceMotionEvent) {
   let ax = 0;
   let ay = 0;
   let az = 0;
-  const a = e.acceleration;
-  if (a && a.x != null && a.y != null && a.z != null) {
-    ax = a.x;
-    ay = a.y;
-    az = a.z;
+  let source = "";
+
+  const lin = accelTriplet(e.acceleration);
+  if (lin) {
+    [ax, ay, az] = lin;
+    source = "accel";
   } else {
-    const g = e.accelerationIncludingGravity;
-    if (!g || g.x == null || g.y == null || g.z == null) {
-      // #region agent log
-      if (!devicemotionLogged) {
-        devicemotionLogged = true;
-        fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
-          body: JSON.stringify({
-            sessionId: "ab4e8d",
-            location: "sensor.ts:onDeviceMotion",
-            message: "devicemotion no usable accel",
-            data: {
-              hasAccelObj: !!a,
-              hasGravityObj: !!g,
-            },
-            timestamp: Date.now(),
-            hypothesisId: "H4",
-          }),
-        }).catch(() => {});
+    const grav = accelTriplet(e.accelerationIncludingGravity);
+    if (grav) {
+      [ax, ay, az] = grav;
+      source = "gravity";
+    } else {
+      const rr = e.rotationRate;
+      const rb = rr?.beta;
+      const rg = rr?.gamma;
+      const ra = rr?.alpha;
+      if (
+        typeof rb === "number" &&
+        typeof rg === "number" &&
+        Number.isFinite(rb) &&
+        Number.isFinite(rg)
+      ) {
+        ax = rb;
+        ay = rg;
+        az = typeof ra === "number" && Number.isFinite(ra) ? ra : 0;
+        source = "gyro";
+      } else {
+        // #region agent log
+        if (!loggedMotionFail) {
+          loggedMotionFail = true;
+          fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
+            body: JSON.stringify({
+              sessionId: "ab4e8d",
+              location: "sensor.ts:onDeviceMotion",
+              message: "no accel/gravity/gyro triplet",
+              data: {
+                hasLin: !!e.acceleration,
+                hasGrav: !!e.accelerationIncludingGravity,
+                hasRR: !!e.rotationRate,
+              },
+              timestamp: Date.now(),
+              hypothesisId: "H4",
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
+        return;
       }
-      // #endregion
-      return;
     }
-    ax = g.x;
-    ay = g.y;
-    az = g.z;
   }
+
+  const ref = source === "gyro" ? RR_REF : PHONE_ACCEL_REF;
   // #region agent log
-  if (!devicemotionLogged) {
-    devicemotionLogged = true;
+  if (!loggedMotionOk) {
+    loggedMotionOk = true;
     fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ab4e8d" },
       body: JSON.stringify({
         sessionId: "ab4e8d",
         location: "sensor.ts:onDeviceMotion",
-        message: "devicemotion first sample ok",
-        data: { usedAccelNotGravity: !!(a && a.x != null) },
+        message: "devicemotion first sample",
+        data: { source },
         timestamp: Date.now(),
         hypothesisId: "H4",
       }),
     }).catch(() => {});
   }
   // #endregion
+
   cb?.({
-    ax: Math.tanh(ax / PHONE_ACCEL_REF),
-    ay: Math.tanh(ay / PHONE_ACCEL_REF),
-    az: Math.tanh(az / PHONE_ACCEL_REF),
+    ax: Math.tanh(ax / ref),
+    ay: Math.tanh(ay / ref),
+    az: Math.tanh(az / ref),
     t: performance.now(),
   });
 }
@@ -103,12 +139,10 @@ function onMouseMove(e: MouseEvent) {
   lastMx = e.clientX;
   lastMy = e.clientY;
 
-  // EMA-smoothed velocity — removes jitter from discrete pixel steps
   const alpha = 0.15;
   smoothVx += alpha * (rawVx - smoothVx);
   smoothVy += alpha * (rawVy - smoothVy);
 
-  // Same ~[-1,1] range as phone (tanh) so feature extraction is cross-device comparable
   const V_REF = 2200;
   cb?.({
     ax: Math.tanh(smoothVx / V_REF),
@@ -119,10 +153,7 @@ function onMouseMove(e: MouseEvent) {
 }
 
 /**
- * Whether to use device motion (accelerometer) instead of mouse.
- * Tablets work the same as phones when the browser exposes DeviceMotionEvent
- * (after permission on iOS Safari). This must catch iPad “desktop” UA
- * (MacIntel + touch) so we don’t fall back to mouse on large iPads.
+ * Touch-first: motion path when DeviceMotion exists + touch, or coarse pointer, or mobile UA.
  */
 export function isMobile(): boolean {
   if (typeof DeviceMotionEvent !== "undefined" && navigator.maxTouchPoints > 0) return true;
@@ -132,14 +163,16 @@ export function isMobile(): boolean {
   try {
     const ud = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
     if (ud?.mobile === true) return true;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return false;
 }
 
 export async function requestMotionPermission(): Promise<boolean> {
-  const hasReq =
-    typeof DeviceMotionEvent !== "undefined" &&
-    typeof (DeviceMotionEvent as any).requestPermission === "function";
+  const DME = DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> };
+  const hasMotionReq = typeof DeviceMotionEvent !== "undefined" && typeof DME.requestPermission === "function";
+
   // #region agent log
   fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
     method: "POST",
@@ -148,15 +181,16 @@ export async function requestMotionPermission(): Promise<boolean> {
       sessionId: "ab4e8d",
       location: "sensor.ts:requestMotionPermission",
       message: "permission branch",
-      data: { usesIOSStylePrompt: hasReq },
+      data: { hasMotionReq },
       timestamp: Date.now(),
       hypothesisId: "H3",
     }),
   }).catch(() => {});
   // #endregion
-  if (hasReq) {
+
+  if (hasMotionReq) {
     try {
-      const perm = await (DeviceMotionEvent as any).requestPermission();
+      const perm = await DME.requestPermission!();
       // #region agent log
       fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
         method: "POST",
@@ -164,7 +198,7 @@ export async function requestMotionPermission(): Promise<boolean> {
         body: JSON.stringify({
           sessionId: "ab4e8d",
           location: "sensor.ts:requestMotionPermission",
-          message: "iOS permission result",
+          message: "DeviceMotion permission",
           data: { perm },
           timestamp: Date.now(),
           hypothesisId: "H3",
@@ -181,6 +215,8 @@ export async function requestMotionPermission(): Promise<boolean> {
 
 export function startSensor(callback: SensorCallback) {
   cb = callback;
+  loggedMotionFail = false;
+  loggedMotionOk = false;
   const mobile = isMobile();
   // #region agent log
   fetch("http://127.0.0.1:7807/ingest/97db18e8-8eed-43b7-8c7f-cd4d981d08ef", {
@@ -190,14 +226,14 @@ export function startSensor(callback: SensorCallback) {
       sessionId: "ab4e8d",
       location: "sensor.ts:startSensor",
       message: "listener branch",
-      data: { isMobile: mobile, mode: mobile ? "devicemotion" : "mousemove" },
+      data: { isMobile: mobile, mode: mobile ? "devicemotion" : "mousemove", secure: window.isSecureContext },
       timestamp: Date.now(),
       hypothesisId: "H1",
     }),
   }).catch(() => {});
   // #endregion
   if (mobile) {
-    window.addEventListener("devicemotion", onDeviceMotion);
+    window.addEventListener("devicemotion", onDeviceMotion, DM_OPTS);
   } else {
     window.addEventListener("mousemove", onMouseMove);
   }
@@ -205,6 +241,6 @@ export function startSensor(callback: SensorCallback) {
 
 export function stopSensor() {
   cb = null;
-  window.removeEventListener("devicemotion", onDeviceMotion);
+  window.removeEventListener("devicemotion", onDeviceMotion, DM_OPTS);
   window.removeEventListener("mousemove", onMouseMove);
 }
