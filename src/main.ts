@@ -175,12 +175,19 @@ function loop(time: number) {
   requestAnimationFrame(loop);
 }
 
+/** Mobile: window capture listeners must not eat taps on create/join UI. */
+function isTargetInsideConnectUI(target: EventTarget | null): boolean {
+  if (!target || !(target instanceof Node)) return false;
+  const area = document.getElementById("connect-area");
+  return area ? area.contains(target) : false;
+}
+
 async function init() {
   if (isMobile()) {
     if (!window.isSecureContext) {
       setHint("use HTTPS — motion needs a secure page");
     } else {
-      setHint("tap to start");
+      setHint("create or join · then tap to dance");
     }
     const detachGesture = () => {
       window.removeEventListener("pointerdown", startOnTap, true);
@@ -190,6 +197,7 @@ async function init() {
     let started = false;
     const startOnTap = async (ev: Event) => {
       if (started) return;
+      if (isTargetInsideConnectUI(ev.target)) return;
       if (ev.type === "pointerdown" && (ev as PointerEvent).button !== 0) return;
       started = true;
       detachGesture();
