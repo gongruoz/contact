@@ -1,5 +1,5 @@
 /**
- * Line strokes: transparent at both ends, solid in the middle (linear along segment).
+ * Segments: spindle profile (thin at both ends, thick at center) + alpha fade along length.
  * Dots: flat fill (no gradient).
  */
 
@@ -29,7 +29,60 @@ export function gappedSegmentEndpoints(
   };
 }
 
-/** Stroke one segment: ends fade to transparent, peak alpha at center. */
+/** Half-width at parameter t ∈ [0,1] along the segment (0 at ends, peak at center). */
+function spindleEnvelope(t: number): number {
+  return Math.sin(Math.PI * t);
+}
+
+/**
+ * Filled spindle along (x1,y1)→(x2,y2): width ∝ sin(πt), alpha gradient along the spine.
+ * `lineWidth` is the maximum thickness at the center (not stroke width).
+ */
+export function fillSpindleSegmentEndFade(
+  ctx: CanvasRenderingContext2D,
+  x1: number, y1: number, x2: number, y2: number,
+  lineWidth: number,
+  rgb: Rgb,
+  centerAlpha: number,
+) {
+  if (centerAlpha < 0.003 || lineWidth < 0.02) return;
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.5) return;
+  const ux = dx / len, uy = dy / len;
+  const nx = -uy, ny = ux;
+  const peakHalf = lineWidth * 0.5;
+  const steps = Math.max(10, Math.min(56, Math.ceil(len / 5)));
+
+  const [r, g, b] = rgb;
+  const lg = ctx.createLinearGradient(x1, y1, x2, y2);
+  lg.addColorStop(0, `rgba(${r},${g},${b},0)`);
+  lg.addColorStop(0.5, `rgba(${r},${g},${b},${centerAlpha})`);
+  lg.addColorStop(1, `rgba(${r},${g},${b},0)`);
+
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const w = peakHalf * spindleEnvelope(t);
+    const cx = x1 + ux * len * t;
+    const cy = y1 + uy * len * t;
+    const px = cx + nx * w;
+    const py = cy + ny * w;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  for (let i = steps; i >= 0; i--) {
+    const t = i / steps;
+    const w = peakHalf * spindleEnvelope(t);
+    const cx = x1 + ux * len * t;
+    const cy = y1 + uy * len * t;
+    ctx.lineTo(cx - nx * w, cy - ny * w);
+  }
+  ctx.closePath();
+  ctx.fillStyle = lg;
+  ctx.fill();
+}
+
 export function strokeLineEndFade(
   ctx: CanvasRenderingContext2D,
   x1: number, y1: number, x2: number, y2: number,
@@ -37,20 +90,7 @@ export function strokeLineEndFade(
   rgb: Rgb,
   centerAlpha: number,
 ) {
-  if (centerAlpha < 0.003) return;
-  const [r, g, b] = rgb;
-  const lg = ctx.createLinearGradient(x1, y1, x2, y2);
-  lg.addColorStop(0, `rgba(${r},${g},${b},0)`);
-  lg.addColorStop(0.5, `rgba(${r},${g},${b},${centerAlpha})`);
-  lg.addColorStop(1, `rgba(${r},${g},${b},0)`);
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.strokeStyle = lg;
-  ctx.lineWidth = lineWidth;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.stroke();
+  fillSpindleSegmentEndFade(ctx, x1, y1, x2, y2, lineWidth, rgb, centerAlpha);
 }
 
 export function strokeGappedLineEndFade(
@@ -63,7 +103,7 @@ export function strokeGappedLineEndFade(
 ) {
   const seg = gappedSegmentEndpoints(ax, ay, bx, by, gap);
   if (!seg) return;
-  strokeLineEndFade(ctx, seg.x1, seg.y1, seg.x2, seg.y2, lineWidth, rgb, centerAlpha);
+  fillSpindleSegmentEndFade(ctx, seg.x1, seg.y1, seg.x2, seg.y2, lineWidth, rgb, centerAlpha);
 }
 
 /** Solid disc — uniform color, no radial gradient. */

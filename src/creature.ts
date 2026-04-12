@@ -1,11 +1,7 @@
 import type { Features } from "./dsp";
 import {
-  fillSolidDot,
-  RGB_PEER_FILL,
   RGB_PEER_STROKE,
-  RGB_SELF_FILL,
   RGB_SELF_STROKE,
-  RGB_MERGE,
   RGB_THREAD,
   strokeGappedLineEndFade,
 } from "./lineGradient";
@@ -304,7 +300,6 @@ export function driveSimplex(
 // ---- Rendering ----
 
 const GAP = 6;
-const NR = 2.75;
 
 export type DrawRole = "self" | "peer";
 
@@ -315,19 +310,13 @@ export function drawSimplex(
   if (opacity <= 0.01) return;
 
   const sA = role === "self" ? opacity * 0.52 : opacity * 0.55;
-  const fA = 0;
   const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
-  const fillRgb = role === "self" ? RGB_SELF_FILL : RGB_PEER_FILL;
   const lw = role === "self" ? 1.35 : 1.15;
 
   for (const c of s.constraints) {
     if (c.isDiag) continue;
     const pa = s.particles[c.a], pb = s.particles[c.b];
     strokeGappedLineEndFade(ctx, pa.x, pa.y, pb.x, pb.y, GAP, lw, strokeRgb, sA);
-  }
-
-  for (const p of s.particles) {
-    fillSolidDot(ctx, p.x, p.y, NR, fillRgb, fA);
   }
 }
 
@@ -398,7 +387,7 @@ export function applyFusion(
 export function drawMergeEffects(
   ctx: CanvasRenderingContext2D,
   self: Simplex, peer: Simplex,
-  pairs: MergePair[], time: number,
+  pairs: MergePair[], _time: number,
 ) {
   for (const { si, pi, strength } of pairs) {
     if (strength < 0.03) continue;
@@ -416,21 +405,5 @@ export function drawMergeEffects(
       );
     }
 
-    const snapDist = 35;
-    if (dist < snapDist) {
-      const closeness = 1 - dist / snapDist;
-      const mx = (sp.x + pp.x) / 2, my = (sp.y + pp.y) / 2;
-      const alpha = closeness * strength * 0.65;
-      const r = NR * (1.4 + closeness * 1.2);
-
-      fillSolidDot(ctx, mx, my, r, RGB_MERGE, alpha);
-
-      const pulse = 1.15 + 0.15 * Math.sin(time * 0.005);
-      ctx.beginPath();
-      ctx.arc(mx, my, r * pulse, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(60, 60, 65, ${alpha * 0.35})`;
-      ctx.lineWidth = 0.6;
-      ctx.stroke();
-    }
   }
 }

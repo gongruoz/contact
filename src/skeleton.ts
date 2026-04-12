@@ -1,7 +1,5 @@
 import type { Features } from "./dsp";
 import {
-  fillSolidDot,
-  RGB_MERGE,
   RGB_PEER_STROKE,
   RGB_SELF_STROKE,
   RGB_THREAD,
@@ -252,11 +250,16 @@ function solve(s: Skeleton, iter: number) {
   }
 }
 
-/** Recover toward anatomical segment lengths — do not "learn" collapsed poses. */
+/** Rest length softly tracks actual span so bones stretch and rebound elastically. */
 function adaptRest(s: Skeleton) {
   for (const b of s.bones) {
-    const rate = b.render ? 0.1 : 0.06;
-    b.rest += (b.baseRest - b.rest) * rate;
+    const ja = s.joints[b.a], jb = s.joints[b.b];
+    const d = Math.hypot(jb.x - ja.x, jb.y - ja.y);
+    const rate = b.render ? 0.11 : 0.055;
+    const lo = b.baseRest * (b.render ? 0.42 : 0.32);
+    const hi = b.baseRest * (b.render ? 1.72 : 1.9);
+    const target = Math.max(lo, Math.min(hi, d));
+    b.rest += (target - b.rest) * rate;
   }
 }
 
@@ -414,7 +417,6 @@ export function driveSkeleton(
 // ---- Rendering ----
 
 const GAP = 11;
-const NR = 2.7;
 
 export type DrawRole = "self" | "peer";
 
@@ -485,14 +487,6 @@ export function drawPeerThreads(
       }
     }
 
-    // merge blob when touching
-    if (dist < P.snapDist) {
-      const closeness = 1 - dist / P.snapDist;
-      const mx = (sj.x + pj.x) / 2, my = (sj.y + pj.y) / 2;
-      const alpha = closeness * 0.45;
-      const r = NR * (1.2 + closeness * 0.8);
-      fillSolidDot(ctx, mx, my, r, RGB_MERGE, alpha);
-    }
   }
 }
 
@@ -540,7 +534,7 @@ export function applySkeletonFusion(
 export function drawSkeletonMergeEffects(
   ctx: CanvasRenderingContext2D,
   self: Skeleton, peer: Skeleton,
-  pairs: SkeletonMergePair[], time: number,
+  pairs: SkeletonMergePair[], _time: number,
 ) {
   for (const { joint, strength } of pairs) {
     if (strength < 0.03) continue;
@@ -554,12 +548,6 @@ export function drawSkeletonMergeEffects(
         0.4 + strength * 0.6, RGB_THREAD, threadAlpha);
     }
 
-    if (dist < 28) {
-      const closeness = 1 - dist / 28;
-      const mx = (sj.x + pj.x) / 2, my = (sj.y + pj.y) / 2;
-      const alpha = closeness * strength * 0.5;
-      fillSolidDot(ctx, mx, my, NR * (1.2 + closeness), RGB_MERGE, alpha);
-    }
   }
 }
 
