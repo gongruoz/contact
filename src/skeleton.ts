@@ -433,8 +433,8 @@ export function driveSkeleton(
 // ---- Rendering ----
 
 const GAP = 7;
-const NR = 2.8;
-const ACTIVE_NR = 4;
+const NR = 2.1;
+const ACTIVE_NR = 3.15;
 
 export type DrawRole = "self" | "peer";
 
@@ -445,7 +445,7 @@ export function drawSkeleton(
   if (opacity <= 0.01) return;
 
   const sA = role === "self" ? opacity * 0.48 : opacity * 0.50;
-  const fA = role === "self" ? opacity * 0.88 : opacity * 0.78;
+  const fA = role === "self" ? opacity * 0.94 : opacity * 0.84;
   const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
   const fillRgb = role === "self" ? RGB_SELF_FILL : RGB_PEER_FILL;
   const lw = role === "self" ? 1.0 : 0.85;
@@ -459,7 +459,7 @@ export function drawSkeleton(
   for (const j of Object.values(s.joints)) {
     const isActive = j.name === s.activeJoint;
     const r = isActive ? ACTIVE_NR : NR;
-    fillDotRadialEndFade(ctx, j.x, j.y, r, fillRgb, fA, isActive ? 1.28 : 1.32);
+    fillDotRadialEndFade(ctx, j.x, j.y, r, fillRgb, fA, isActive ? 1.12 : 1.14);
   }
 
   const aj = s.joints[s.activeJoint];
@@ -553,7 +553,7 @@ export function drawSkeletonMergeEffects(
       const alpha = closeness * strength * 0.55;
       const r = NR * (1.3 + closeness * 1.0);
 
-      fillDotRadialEndFade(ctx, mx, my, r, RGB_MERGE, alpha, 1.2);
+      fillDotRadialEndFade(ctx, mx, my, r, RGB_MERGE, alpha, 1.14);
 
       const pulse = 1.1 + 0.12 * Math.sin(time * 0.005);
       ctx.beginPath();

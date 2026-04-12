@@ -304,7 +304,7 @@ export function driveSimplex(
 // ---- Rendering ----
 
 const GAP = 6;
-const NR = 4;
+const NR = 2.75;
 
 export type DrawRole = "self" | "peer";
 
@@ -315,7 +315,7 @@ export function drawSimplex(
   if (opacity <= 0.01) return;
 
   const sA = role === "self" ? opacity * 0.52 : opacity * 0.55;
-  const fA = role === "self" ? opacity * 0.92 : opacity * 0.82;
+  const fA = role === "self" ? opacity * 0.96 : opacity * 0.86;
   const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
   const fillRgb = role === "self" ? RGB_SELF_FILL : RGB_PEER_FILL;
   const lw = role === "self" ? 1.35 : 1.15;
@@ -423,7 +423,7 @@ export function drawMergeEffects(
       const alpha = closeness * strength * 0.65;
       const r = NR * (1.4 + closeness * 1.2);
 
-      fillDotRadialEndFade(ctx, mx, my, r, RGB_MERGE, alpha, 1.2);
+      fillDotRadialEndFade(ctx, mx, my, r, RGB_MERGE, alpha, 1.14);
 
       const pulse = 1.15 + 0.15 * Math.sin(time * 0.005);
       ctx.beginPath();

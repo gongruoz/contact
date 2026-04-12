@@ -91,11 +91,11 @@ export class TrailSystem {
         strokeGappedLineEndFade(ctx, pa.x, pa.y, pb.x, pb.y, gap, lw, rgb, layerAlpha);
       }
 
-      const dotRBase = role === "self" ? 2.35 : 2.15;
+      const dotRBase = role === "self" ? 1.65 : 1.5;
       for (const [key, pt] of Object.entries(snap)) {
         const isActive = activeJoint !== undefined && key === activeJoint;
-        const coreR = isActive ? dotRBase * 1.35 : dotRBase;
-        fillDotRadialEndFade(ctx, pt.x, pt.y, coreR, rgb, layerAlpha * 0.92, 1.45);
+        const coreR = isActive ? dotRBase * 1.2 : dotRBase;
+        fillDotRadialEndFade(ctx, pt.x, pt.y, coreR, rgb, layerAlpha * 0.94, 1.12);
       }
     }
   }

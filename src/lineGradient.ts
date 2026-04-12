@@ -66,22 +66,22 @@ export function strokeGappedLineEndFade(
   strokeLineEndFade(ctx, seg.x1, seg.y1, seg.x2, seg.y2, lineWidth, rgb, centerAlpha);
 }
 
-/** Filled disc: strong center, soft falloff to transparent at outer radius. */
+/** Filled disc: small sharp core, short soft edge to transparent. */
 export function fillDotRadialEndFade(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number,
   coreRadius: number,
   rgb: Rgb,
   centerAlpha: number,
-  outerScale = 1.35,
+  outerScale = 1.14,
 ) {
   if (centerAlpha < 0.003) return;
   const outer = coreRadius * outerScale;
   const [r, g, b] = rgb;
   const rad = ctx.createRadialGradient(cx, cy, 0, cx, cy, outer);
   rad.addColorStop(0, `rgba(${r},${g},${b},${centerAlpha})`);
-  rad.addColorStop(0.42, `rgba(${r},${g},${b},${centerAlpha * 0.92})`);
-  rad.addColorStop(0.78, `rgba(${r},${g},${b},${centerAlpha * 0.35})`);
+  rad.addColorStop(0.55, `rgba(${r},${g},${b},${centerAlpha * 0.97})`);
+  rad.addColorStop(0.82, `rgba(${r},${g},${b},${centerAlpha * 0.22})`);
   rad.addColorStop(1, `rgba(${r},${g},${b},0)`);
   ctx.beginPath();
   ctx.arc(cx, cy, outer, 0, Math.PI * 2);
