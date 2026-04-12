@@ -7,7 +7,6 @@ import {
   RGB_SELF_FILL,
   RGB_SELF_STROKE,
   RGB_THREAD,
-  type Rgb,
   strokeGappedLineEndFade,
 } from "./lineGradient";
 
@@ -24,6 +23,14 @@ export const SKEL_PARAMS = {
   headRadius: 8,
   peerAttraction: 0.06,
   snapDist: 22,
+  /** Downward acceleration scale (canvas +y = down). */
+  gravity: 1.35,
+  /** Max deviation of each bone from its rest direction (radians). */
+  jointLimitRad: 0.52,
+  /** Rare jump impulse when motion is strong while grounded. */
+  jumpImpulse: 7,
+  /** Extra spin during air (radians/s scale). */
+  airFlipScale: 2.4,
 };
 
 // ---- Types ----
@@ -60,6 +67,9 @@ export interface Skeleton {
   smRawX: number; smRawY: number;
   _amp: number; _freq: number; _axis: number; _smooth: number;
   _speed: number; _rhythm: number;
+  /** Angular velocity for occasional in-air tumble (rad/s-ish). */
+  airSpin: number;
+  jumpCooldown: number;
 }
 
 export interface SkeletonMergePair {
@@ -111,6 +121,24 @@ const JOINT_NAMES = Object.keys(REST_POSITIONS);
 const TORSO_JOINTS = new Set(["torso_top", "torso_bl", "torso_br"]);
 const EXTREMITIES = new Set(["hand_l", "hand_r", "foot_l", "foot_r"]);
 
+/** Feet rest Y offset from anchor (cy + leanY); matches REST_POSITIONS.foot_*.y */
+const FOOT_REST_Y = REST_POSITIONS.foot_l.y;
+
+/** Per-bone max angle deviation from anatomical rest (radians); long limbs slightly looser. */
+const BONE_ANGLE_LIMITS: { a: string; b: string; maxDev: number }[] = [
+  { a: "torso_top", b: "torso_bl", maxDev: 0.38 },
+  { a: "torso_bl", b: "torso_br", maxDev: 0.4 },
+  { a: "torso_br", b: "torso_top", maxDev: 0.38 },
+  { a: "shoulder_l", b: "torso_top", maxDev: 0.36 },
+  { a: "shoulder_r", b: "torso_top", maxDev: 0.36 },
+  { a: "shoulder_l", b: "hand_l", maxDev: 0.58 },
+  { a: "shoulder_r", b: "hand_r", maxDev: 0.58 },
+  { a: "torso_bl", b: "hip", maxDev: 0.42 },
+  { a: "torso_br", b: "hip", maxDev: 0.42 },
+  { a: "hip", b: "foot_l", maxDev: 0.5 },
+  { a: "hip", b: "foot_r", maxDev: 0.5 },
+];
+
 // ---- Adjacency ----
 
 const ADJ: Record<string, string[]> = {};
@@ -160,6 +188,8 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
     smRawX: 0, smRawY: 0,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
     _speed: 0, _rhythm: 0,
+    airSpin: 0,
+    jumpCooldown: 0,
   };
   s.distances = computeDistances(s.activeJoint);
   return s;
@@ -191,12 +221,130 @@ function comXY(joints: Record<string, Joint>) {
   return { x: x / n, y: y / n };
 }
 
-function lockCOM(s: Skeleton) {
-  const { x: mx, y: my } = comXY(s.joints);
-  const ax = s.cx + s.leanX, ay = s.cy + s.leanY;
-  const dx = ax - mx, dy = ay - my;
+/** Horizontal anchor only — vertical pose comes from gravity + floor. */
+function lockCOMHorizontal(s: Skeleton) {
+  const { x: mx } = comXY(s.joints);
+  const ax = s.cx + s.leanX;
+  const dx = ax - mx;
   for (const j of Object.values(s.joints)) {
-    j.x += dx; j.y += dy; j.px += dx; j.py += dy;
+    j.x += dx;
+    j.px += dx;
+  }
+}
+
+function groundY(s: Skeleton): number {
+  return s.cy + s.leanY + FOOT_REST_Y;
+}
+
+function isGrounded(s: Skeleton): boolean {
+  const gy = groundY(s);
+  const fl = s.joints.foot_l, fr = s.joints.foot_r;
+  return Math.max(fl.y, fr.y) >= gy - 7;
+}
+
+/** Lift figure if feet penetrate floor; damp foot Verlet on impact. */
+function resolveGround(s: Skeleton) {
+  const gy = groundY(s);
+  const fl = s.joints.foot_l, fr = s.joints.foot_r;
+  const lowest = Math.max(fl.y, fr.y);
+  if (lowest > gy) {
+    const shift = lowest - gy;
+    for (const j of Object.values(s.joints)) {
+      j.y -= shift;
+      j.py -= shift;
+    }
+    const damp = 0.42;
+    fl.py = fl.y - (fl.y - fl.py) * damp;
+    fr.py = fr.y - (fr.y - fr.py) * damp;
+  }
+}
+
+function applyGroundFriction(s: Skeleton) {
+  if (!isGrounded(s)) return;
+  const f = 0.88;
+  for (const j of [s.joints.foot_l, s.joints.foot_r]) {
+    j.px = j.x - (j.x - j.px) * f;
+  }
+}
+
+function accumulateGravity(s: Skeleton) {
+  const g = SKEL_PARAMS.gravity;
+  for (const j of Object.values(s.joints)) {
+    let w = 0.95;
+    if (j.name === "foot_l" || j.name === "foot_r") w = 1.12;
+    else if (j.name === "hip") w = 1.06;
+    else if (j.name === "head") w = 0.74;
+    else if (j.name.startsWith("hand") || j.name.startsWith("shoulder")) w = 0.8;
+    j.fy += g * w;
+  }
+}
+
+function restVec(ax: string, bx: string): { dx: number; dy: number } {
+  const ra = REST_POSITIONS[ax], rb = REST_POSITIONS[bx];
+  return { dx: rb.x - ra.x, dy: rb.y - ra.y };
+}
+
+/** Clamp bone headings toward anatomical rest directions. */
+function applyJointAngleLimits(s: Skeleton) {
+  const scale = SKEL_PARAMS.jointLimitRad / 0.52;
+  for (const { a, b, maxDev } of BONE_ANGLE_LIMITS) {
+    const ja = s.joints[a], jb = s.joints[b];
+    if (!ja || !jb) continue;
+    const maxR = maxDev * scale;
+    const { dx: rdx, dy: rdy } = restVec(a, b);
+    const ar = Math.atan2(rdy, rdx);
+
+    const dx = jb.x - ja.x, dy = jb.y - ja.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) continue;
+    const ac = Math.atan2(dy, dx);
+    let delta = ac - ar;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    const clamped = Math.max(-maxR, Math.min(maxR, delta));
+    if (Math.abs(clamped - delta) < 1e-5) continue;
+    const acNew = ar + clamped;
+    jb.x = ja.x + Math.cos(acNew) * len;
+    jb.y = ja.y + Math.sin(acNew) * len;
+  }
+}
+
+function tryJumpAndAirPhysics(
+  s: Skeleton, dt: number,
+  rawLen: number, motionMag: number, amp: number,
+) {
+  const P = SKEL_PARAMS;
+  const gy = groundY(s);
+  const fl = s.joints.foot_l, fr = s.joints.foot_r;
+  const maxFootY = Math.max(fl.y, fr.y);
+  const grounded = maxFootY >= gy - 8;
+
+  s.jumpCooldown = Math.max(0, s.jumpCooldown - dt);
+
+  if (grounded && s.jumpCooldown <= 0 && motionMag * amp > 0.48 && s._speed > 0.32) {
+    if (Math.random() < dt * 1.65) {
+      s.jumpCooldown = 1.1 + Math.random() * 1.1;
+      const imp = P.jumpImpulse * (0.55 + motionMag * 0.85 + amp * 0.35);
+      const lift = (j: Joint, mul: number) => { j.py = j.y + imp * mul; };
+      lift(s.joints.hip, 1.15);
+      lift(s.joints.torso_top, 0.9);
+      lift(s.joints.torso_bl, 0.72);
+      lift(s.joints.torso_br, 0.72);
+      lift(fl, 0.45);
+      lift(fr, 0.45);
+      if (Math.random() < 0.2) {
+        s.airSpin = (Math.random() < 0.5 ? -1 : 1) * P.airFlipScale *
+          (0.55 + motionMag * 0.9 + rawLen * 0.4);
+      }
+    }
+  }
+
+  if (!grounded) {
+    s.airSpin *= 0.988;
+    s.airSpin += (Math.random() - 0.5) * rawLen * motionMag * 0.055 * P.airFlipScale;
+    s.airSpin = Math.max(-3.8, Math.min(3.8, s.airSpin));
+  } else {
+    s.airSpin *= 0.72;
   }
 }
 
@@ -334,6 +482,7 @@ export function driveSkeleton(
   const amp = s._amp;
   const motionMag = Math.min(1, rawLen * 1.0);
   const express = Math.max(0.25, Math.min(1.15, 0.3 + amp * 0.32 + motionMag * 0.4));
+  const groundedStart = isGrounded(s);
 
   const P = SKEL_PARAMS;
   const eStiff = Math.max(0.035, (P.stiffness + s._smooth * 0.06) * (1 - 0.12 * motionMag));
@@ -378,6 +527,7 @@ export function driveSkeleton(
     const ux = rx / rl, uy = ry / rl;
     const off = (JOINT_NAMES.indexOf(j.name) / JOINT_NAMES.length) * Math.PI * 2;
     const breathe = (0.04 + amp * 0.22 + motionMag * 0.16) * P.breatheScale *
+      (groundedStart ? 0.48 : 1) *
       Math.sin(s.phase + off + phaseOff);
     j.fx += ux * breathe; j.fy += uy * breathe;
 
@@ -397,10 +547,18 @@ export function driveSkeleton(
   spreadPressure(s);
   boneMinLength(s);
   adaptRest(s);
+  tryJumpAndAirPhysics(s, dt, rawLen, motionMag, amp);
+  accumulateGravity(s);
   integrate(s, dt, 1 + motionMag * 0.4);
   solve(s, 7);
-  lockCOM(s);
-  rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);
+  applyJointAngleLimits(s);
+  applyJointAngleLimits(s);
+  resolveGround(s);
+  applyGroundFriction(s);
+  lockCOMHorizontal(s);
+  const airD = dTilt + s.airSpin * dt * 0.88;
+  rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, airD);
+  resolveGround(s);
 }
 
 // ---- Rendering ----
@@ -557,9 +715,12 @@ export function applySkeletonFusion(
     sj.fx += (dx / dist) * f; sj.fy += (dy / dist) * f;
     pj.fx -= (dx / dist) * f; pj.fy -= (dy / dist) * f;
   }
+  accumulateGravity(self);
+  accumulateGravity(peer);
   integrate(self, dt); integrate(peer, dt);
   solve(self, 3); solve(peer, 3);
-  lockCOM(self); lockCOM(peer);
+  resolveGround(self); resolveGround(peer);
+  lockCOMHorizontal(self); lockCOMHorizontal(peer);
 }
 
 export function drawSkeletonMergeEffects(
