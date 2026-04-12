@@ -154,7 +154,7 @@ onPeerDisconnected(() => {
   if (isMobile()) {
     if (!window.isSecureContext) setHint("use HTTPS — motion needs a secure page");
     else if (!isSensorRunning()) setHint("create or join · then tap to dance");
-    else setHint("move your body — make it dance");
+    else setHint("move your phone — make it dance");
   } else {
     setHint("move your mouse — make it dance");
   }
@@ -261,7 +261,7 @@ async function init() {
         setHint("motion permission denied");
         return;
       }
-      setHint("move your body — make it dance");
+      setHint("move your phone — make it dance");
       startSensor(onSensorSample);
     };
     window.addEventListener("touchend", startOnTap, touchendOpts);

@@ -10,6 +10,8 @@ const statusEl = document.getElementById("status")!;
 const statusDetailEl = document.getElementById("status-detail")!;
 const taglineEl = document.getElementById("tagline")!;
 
+let disconnectFadeGen = 0;
+
 export function setHint(text: string) {
   hint.textContent = text;
   hint.style.opacity = "0.5";
@@ -37,6 +39,9 @@ export function showConnected() {
 }
 
 export function showDisconnected() {
+  disconnectFadeGen += 1;
+  const gen = disconnectFadeGen;
+
   connectArea.classList.remove("hidden");
   connectControls.classList.remove("hidden");
   btnExit.classList.add("hidden");
@@ -46,9 +51,29 @@ export function showDisconnected() {
   btnJoin.parentElement!.classList.remove("hidden");
   taglineEl.classList.remove("hidden");
   clearPeerError();
+
+  statusEl.classList.remove("disconnected-fade");
   statusEl.textContent = "disconnected";
   statusEl.style.opacity = "1";
-  setTimeout(() => { statusEl.style.opacity = "0.4"; }, 2000);
+
+  const armFade = () => {
+    if (gen !== disconnectFadeGen) return;
+    statusEl.classList.add("disconnected-fade");
+    statusEl.style.opacity = "0";
+  };
+  requestAnimationFrame(() => {
+    requestAnimationFrame(armFade);
+  });
+
+  const onEnd = (e: TransitionEvent) => {
+    if (e.propertyName !== "opacity") return;
+    statusEl.removeEventListener("transitionend", onEnd);
+    if (gen !== disconnectFadeGen) return;
+    statusEl.classList.remove("disconnected-fade");
+    statusEl.textContent = "";
+    statusEl.style.opacity = "";
+  };
+  statusEl.addEventListener("transitionend", onEnd);
 }
 
 function clearPeerError() {
