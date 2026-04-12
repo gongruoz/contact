@@ -1,6 +1,6 @@
 import type { Features } from "./dsp";
 import {
-  fillDotRadialEndFade,
+  fillSolidDot,
   RGB_PEER_FILL,
   RGB_PEER_STROKE,
   RGB_SELF_FILL,
@@ -327,7 +327,7 @@ export function drawSimplex(
   }
 
   for (const p of s.particles) {
-    fillDotRadialEndFade(ctx, p.x, p.y, NR, fillRgb, fA);
+    fillSolidDot(ctx, p.x, p.y, NR, fillRgb, fA);
   }
 }
 
@@ -423,7 +423,7 @@ export function drawMergeEffects(
       const alpha = closeness * strength * 0.65;
       const r = NR * (1.4 + closeness * 1.2);
 
-      fillDotRadialEndFade(ctx, mx, my, r, RGB_MERGE, alpha, 1.14);
+      fillSolidDot(ctx, mx, my, r, RGB_MERGE, alpha);
 
       const pulse = 1.15 + 0.15 * Math.sin(time * 0.005);
       ctx.beginPath();

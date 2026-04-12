@@ -279,9 +279,9 @@ function loop(time: number) {
     ctx.clearRect(0, 0, w, h);
 
     const skelGap = 7;
-    selfTrail.draw(ctx, getSkeletonBones(selfSkel), "self", skelGap, selfSkel.activeJoint);
+    selfTrail.draw(ctx, getSkeletonBones(selfSkel), "self", skelGap);
     if (connected && peerFeatures !== null) {
-      peerTrail.draw(ctx, getSkeletonBones(peerSkel), "peer", skelGap, peerSkel.activeJoint);
+      peerTrail.draw(ctx, getSkeletonBones(peerSkel), "peer", skelGap);
     }
 
     drawSkeleton(ctx, selfSkel, 1, "self");

@@ -1,6 +1,6 @@
 /**
  * Line strokes: transparent at both ends, solid in the middle (linear along segment).
- * Dots: radial — center opaque, edge transparent.
+ * Dots: flat fill (no gradient).
  */
 
 export type Rgb = readonly [number, number, number];
@@ -66,25 +66,18 @@ export function strokeGappedLineEndFade(
   strokeLineEndFade(ctx, seg.x1, seg.y1, seg.x2, seg.y2, lineWidth, rgb, centerAlpha);
 }
 
-/** Filled disc: small sharp core, short soft edge to transparent. */
-export function fillDotRadialEndFade(
+/** Solid disc — uniform color, no radial gradient. */
+export function fillSolidDot(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number,
-  coreRadius: number,
+  radius: number,
   rgb: Rgb,
-  centerAlpha: number,
-  outerScale = 1.14,
+  alpha: number,
 ) {
-  if (centerAlpha < 0.003) return;
-  const outer = coreRadius * outerScale;
+  if (alpha < 0.003) return;
   const [r, g, b] = rgb;
-  const rad = ctx.createRadialGradient(cx, cy, 0, cx, cy, outer);
-  rad.addColorStop(0, `rgba(${r},${g},${b},${centerAlpha})`);
-  rad.addColorStop(0.55, `rgba(${r},${g},${b},${centerAlpha * 0.97})`);
-  rad.addColorStop(0.82, `rgba(${r},${g},${b},${centerAlpha * 0.22})`);
-  rad.addColorStop(1, `rgba(${r},${g},${b},0)`);
   ctx.beginPath();
-  ctx.arc(cx, cy, outer, 0, Math.PI * 2);
-  ctx.fillStyle = rad;
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
   ctx.fill();
 }

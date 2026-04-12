@@ -1,6 +1,6 @@
 import type { Features } from "./dsp";
 import {
-  fillDotRadialEndFade,
+  fillSolidDot,
   RGB_MERGE,
   RGB_PEER_FILL,
   RGB_PEER_STROKE,
@@ -459,7 +459,7 @@ export function drawSkeleton(
   for (const j of Object.values(s.joints)) {
     const isActive = j.name === s.activeJoint;
     const r = isActive ? ACTIVE_NR : NR;
-    fillDotRadialEndFade(ctx, j.x, j.y, r, fillRgb, fA, isActive ? 1.12 : 1.14);
+    fillSolidDot(ctx, j.x, j.y, r, fillRgb, fA);
   }
 
   const aj = s.joints[s.activeJoint];
@@ -553,7 +553,7 @@ export function drawSkeletonMergeEffects(
       const alpha = closeness * strength * 0.55;
       const r = NR * (1.3 + closeness * 1.0);
 
-      fillDotRadialEndFade(ctx, mx, my, r, RGB_MERGE, alpha, 1.14);
+      fillSolidDot(ctx, mx, my, r, RGB_MERGE, alpha);
 
       const pulse = 1.1 + 0.12 * Math.sin(time * 0.005);
       ctx.beginPath();

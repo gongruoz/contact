@@ -1,13 +1,9 @@
 /**
- * Generic trail renderer — captures named point snapshots and draws
- * fading echoes. Lines: end-fade gradient; dots: radial ghost.
+ * Generic trail renderer — bone echoes (gapped gradient lines) +
+ * point paths as thin line segments only (no dot blobs).
  */
 
-import {
-  fillDotRadialEndFade,
-  type Rgb,
-  strokeGappedLineEndFade,
-} from "./lineGradient";
+import { type Rgb, strokeGappedLineEndFade } from "./lineGradient";
 
 export interface TrailConfig {
   maxFrames: number;
@@ -69,16 +65,16 @@ export class TrailSystem {
     bones: [string, string][],
     role: "self" | "peer",
     gap: number,
-    activeJoint?: string,
   ) {
     if (!this.enabled || this.history.length < 2) return;
 
     const total = this.history.length;
     const rgb = role === "self" ? TRAIL_SELF : TRAIL_PEER;
+    const h = this.history;
 
-    // Skip newest snapshot — live figure draws the current pose.
+    // Bone echoes: skip newest snapshot — live figure draws current pose.
     for (let i = 0; i < total - 1; i++) {
-      const snap = this.history[i];
+      const snap = h[i];
       const age = (i + 1) / total;
       const layerAlpha = Math.pow(age, this.cfg.fadeExponent) * this.cfg.maxAlpha;
       if (layerAlpha < 0.003) continue;
@@ -90,12 +86,35 @@ export class TrailSystem {
         if (!pa || !pb) continue;
         strokeGappedLineEndFade(ctx, pa.x, pa.y, pb.x, pb.y, gap, lw, rgb, layerAlpha);
       }
+    }
 
-      const dotRBase = role === "self" ? 1.65 : 1.5;
-      for (const [key, pt] of Object.entries(snap)) {
-        const isActive = activeJoint !== undefined && key === activeJoint;
-        const coreR = isActive ? dotRBase * 1.2 : dotRBase;
-        fillDotRadialEndFade(ctx, pt.x, pt.y, coreR, rgb, layerAlpha * 0.94, 1.12);
+    // Point motion: one polyline stroke per key (thin line, no filled dots).
+    const keySet = new Set<string>();
+    for (const snap of h) {
+      for (const k of Object.keys(snap)) keySet.add(k);
+    }
+
+    for (const key of keySet) {
+      for (let i = 0; i < total - 1; i++) {
+        const pa = h[i][key];
+        const pb = h[i + 1][key];
+        if (!pa || !pb) continue;
+        const dx = pb.x - pa.x, dy = pb.y - pa.y;
+        if (dx * dx + dy * dy < 0.04) continue;
+
+        const age = (i + 1) / total;
+        const segAlpha = Math.pow(age, this.cfg.fadeExponent) * this.cfg.maxAlpha * 0.92;
+        if (segAlpha < 0.003) continue;
+
+        const lw = 0.14 + age * 0.22;
+        const [r, g, b] = rgb;
+        ctx.beginPath();
+        ctx.moveTo(pa.x, pa.y);
+        ctx.lineTo(pb.x, pb.y);
+        ctx.strokeStyle = `rgba(${r},${g},${b},${segAlpha})`;
+        ctx.lineWidth = lw;
+        ctx.lineCap = "round";
+        ctx.stroke();
       }
     }
   }
