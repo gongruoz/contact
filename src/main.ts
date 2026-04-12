@@ -21,6 +21,7 @@ import {
   computeSkeletonMergePairs, applySkeletonFusion, drawSkeletonMergeEffects,
   getSkeletonPoints, getSkeletonBones,
   applyPeerAttraction, drawPeerThreads,
+  hitTestSkeletonJoint, skeletonBeginDrag, skeletonUpdateDrag, skeletonEndDrag,
   SKEL_PARAMS,
   type Skeleton, type SkeletonMergePair,
 } from "./skeleton";
@@ -58,6 +59,13 @@ let peerSkel: Skeleton;
 
 const selfTrail = new TrailSystem();
 const peerTrail = new TrailSystem();
+
+let skelDragPointerId: number | null = null;
+
+function pointerToCanvasCss(ev: PointerEvent): { x: number; y: number } {
+  const rect = canvas.getBoundingClientRect();
+  return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+}
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -396,6 +404,13 @@ async function init() {
 
   function applyMode(next: FigureMode) {
     if (mode === next) return;
+    if (mode === "skeleton" && skelDragPointerId !== null) {
+      try {
+        canvas.releasePointerCapture(skelDragPointerId);
+      } catch { /* not captured */ }
+      skeletonEndDrag(selfSkel);
+      skelDragPointerId = null;
+    }
     mode = next;
     selfTrail.clear();
     peerTrail.clear();
@@ -430,12 +445,12 @@ async function init() {
       { key: "driftScale",      label: "drift",        min: 0,    max: 1.5,   step: 0.05  },
       { key: "breatheScale",    label: "breathe",      min: 0,    max: 2,     step: 0.05  },
       { key: "stiffness",       label: "stiffness",    min: 0.01, max: 0.3,   step: 0.005 },
-      { key: "conductanceBase", label: "conductance",  min: 0.2,  max: 0.85,  step: 0.01  },
       { key: "leanAmount",      label: "lean",         min: 0,    max: 100,   step: 1     },
       { key: "headRadius",      label: "head size",    min: 3,    max: 18,    step: 0.5   },
       { key: "peerAttraction",  label: "peer pull",    min: 0,    max: 0.3,   step: 0.005 },
       { key: "snapDist",        label: "snap dist",    min: 5,    max: 60,    step: 1     },
       { key: "gravity",         label: "gravity",      min: 0,    max: 3.5,   step: 0.05  },
+      { key: "postureStrength", label: "posture",      min: 0.35, max: 1.85,  step: 0.05  },
       { key: "jointLimitRad",   label: "joint limit",  min: 0.2,  max: 0.95,  step: 0.02  },
       { key: "jumpImpulse",     label: "jump",         min: 0,    max: 16,    step: 0.5   },
       { key: "airFlipScale",    label: "air flip",     min: 0,    max: 5,     step: 0.1   },
@@ -445,6 +460,37 @@ async function init() {
   );
 
   syncFigureToolbar(mode, selfTrail.enabled);
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (mode !== "skeleton" || e.button !== 0) return;
+    const { x, y } = pointerToCanvasCss(e);
+    const joint = hitTestSkeletonJoint(selfSkel, x, y);
+    if (!joint) return;
+    e.preventDefault();
+    skeletonBeginDrag(selfSkel, joint, x, y);
+    skelDragPointerId = e.pointerId;
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch { /* ignore */ }
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (skelDragPointerId === null || e.pointerId !== skelDragPointerId) return;
+    const { x, y } = pointerToCanvasCss(e);
+    skeletonUpdateDrag(selfSkel, x, y);
+  });
+
+  const endSkelDrag = (e: PointerEvent) => {
+    if (skelDragPointerId === null || e.pointerId !== skelDragPointerId) return;
+    try {
+      canvas.releasePointerCapture(e.pointerId);
+    } catch { /* ignore */ }
+    skeletonEndDrag(selfSkel);
+    skelDragPointerId = null;
+  };
+  canvas.addEventListener("pointerup", endSkelDrag);
+  canvas.addEventListener("pointercancel", endSkelDrag);
+
   requestAnimationFrame(loop);
 }
 

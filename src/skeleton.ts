@@ -14,19 +14,24 @@ import {
 
 export const SKEL_PARAMS = {
   damping: 0.968,
-  forceScale: 5.5,
+  forceScale: 6.2,
   driftScale: 0.35,
   breatheScale: 0.55,
-  stiffness: 0.09,
-  conductanceBase: 0.52,
+  /** Bone constraint strength (higher = more rigid, resists collapse). */
+  stiffness: 0.14,
   leanAmount: 45,
   headRadius: 8,
   peerAttraction: 0.06,
   snapDist: 22,
-  /** Downward acceleration scale (canvas +y = down). */
-  gravity: 1.35,
+  /** Downward acceleration (canvas +y = down). Kept moderate vs postural tone. */
+  gravity: 0.72,
+  /**
+   * Global muscle tone: pulls every joint toward standing pose in the lean+tilt frame.
+   * Without this, gravity collapses a single-driven chain.
+   */
+  postureStrength: 1,
   /** Max deviation of each bone from its rest direction (radians). */
-  jointLimitRad: 0.52,
+  jointLimitRad: 0.58,
   /** Rare jump impulse when motion is strong while grounded. */
   jumpImpulse: 7,
   /** Extra spin during air (radians/s scale). */
@@ -70,6 +75,10 @@ export interface Skeleton {
   /** Angular velocity for occasional in-air tumble (rad/s-ish). */
   airSpin: number;
   jumpCooldown: number;
+  /** Direct manipulation: null when not dragging. */
+  dragJoint: string | null;
+  dragX: number;
+  dragY: number;
 }
 
 export interface SkeletonMergePair {
@@ -190,6 +199,9 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
     _speed: 0, _rhythm: 0,
     airSpin: 0,
     jumpCooldown: 0,
+    dragJoint: null,
+    dragX: 0,
+    dragY: 0,
   };
   s.distances = computeDistances(s.activeJoint);
   return s;
@@ -207,10 +219,6 @@ function computeDistances(from: string): Record<string, number> {
     }
   }
   return dist;
-}
-
-function conductance(hops: number): number {
-  return Math.pow(SKEL_PARAMS.conductanceBase, hops);
 }
 
 // ---- Physics ----
@@ -261,7 +269,7 @@ function resolveGround(s: Skeleton) {
 
 function applyGroundFriction(s: Skeleton) {
   if (!isGrounded(s)) return;
-  const f = 0.88;
+  const f = 0.84;
   for (const j of [s.joints.foot_l, s.joints.foot_r]) {
     j.px = j.x - (j.x - j.px) * f;
   }
@@ -284,15 +292,16 @@ function restVec(ax: string, bx: string): { dx: number; dy: number } {
   return { dx: rb.x - ra.x, dy: rb.y - ra.y };
 }
 
-/** Clamp bone headings toward anatomical rest directions. */
-function applyJointAngleLimits(s: Skeleton) {
-  const scale = SKEL_PARAMS.jointLimitRad / 0.52;
+/** Clamp bone headings toward anatomical rest directions (tilt-aligned model frame). */
+function applyJointAngleLimits(s: Skeleton, modelTilt: number) {
+  const scale = SKEL_PARAMS.jointLimitRad / 0.58;
+  const th = modelTilt;
   for (const { a, b, maxDev } of BONE_ANGLE_LIMITS) {
     const ja = s.joints[a], jb = s.joints[b];
     if (!ja || !jb) continue;
     const maxR = maxDev * scale;
     const { dx: rdx, dy: rdy } = restVec(a, b);
-    const ar = Math.atan2(rdy, rdx);
+    const ar = Math.atan2(rdy, rdx) + th;
 
     const dx = jb.x - ja.x, dy = jb.y - ja.y;
     const len = Math.hypot(dx, dy);
@@ -313,6 +322,8 @@ function tryJumpAndAirPhysics(
   s: Skeleton, dt: number,
   rawLen: number, motionMag: number, amp: number,
 ) {
+  if (s.dragJoint) return;
+
   const P = SKEL_PARAMS;
   const gy = groundY(s);
   const fl = s.joints.foot_l, fr = s.joints.foot_r;
@@ -388,25 +399,57 @@ function solve(s: Skeleton, iter: number) {
   }
 }
 
+/** Recover toward anatomical segment lengths — do not "learn" collapsed poses. */
 function adaptRest(s: Skeleton) {
   for (const b of s.bones) {
-    const ja = s.joints[b.a], jb = s.joints[b.b];
-    const d = Math.hypot(jb.x - ja.x, jb.y - ja.y);
-    const rate = b.render ? 0.06 : 0.012;
-    const lo = b.baseRest * 0.5, hi = b.baseRest * 1.8;
-    b.rest += (Math.max(lo, Math.min(hi, d)) - b.rest) * rate;
+    const rate = b.render ? 0.1 : 0.06;
+    b.rest += (b.baseRest - b.rest) * rate;
   }
 }
 
-function spreadPressure(s: Skeleton) {
+function spreadPressure(s: Skeleton, strength = 0.2) {
   const { x: cx, y: cy } = comXY(s.joints);
   for (const j of Object.values(s.joints)) {
     const dx = j.x - cx, dy = j.y - cy;
     const d = Math.hypot(dx, dy);
     if (d < 14 && d > 0.01) {
-      const push = ((14 - d) / 14) * 0.2;
+      const push = ((14 - d) / 14) * strength;
       j.fx += (dx / d) * push; j.fy += (dy / d) * push;
     }
+  }
+}
+
+/**
+ * Standing tone: pulls joints toward the anatomical layout expressed in the current
+ * lean+tilt frame. Real humans use continuous postural control; this is the analogue.
+ */
+function applyPosturalSupport(s: Skeleton, grounded: boolean, active: string, modelTilt: number) {
+  const P = SKEL_PARAMS;
+  const ax = s.cx + s.leanX;
+  const ay = s.cy + s.leanY;
+  const th = modelTilt;
+  const c = Math.cos(th), si = Math.sin(th);
+  const airMul = grounded ? 1 : 0.62;
+  const ps = P.postureStrength;
+
+  for (const j of Object.values(s.joints)) {
+    if (s.dragJoint === j.name) continue;
+
+    const rx = j.restX * c - j.restY * si;
+    const ry = j.restX * si + j.restY * c;
+    const tx = ax + rx, ty = ay + ry;
+    const dx = tx - j.x, dy = ty - j.y;
+
+    let k = 0.48;
+    if (TORSO_JOINTS.has(j.name) || j.name === "hip") k = 0.82;
+    else if (EXTREMITIES.has(j.name)) k = 0.34;
+    else if (j.name === "head") k = 0.46;
+
+    if (j.name === active) k *= 0.26;
+    k *= airMul * ps;
+
+    j.fx += dx * k;
+    j.fy += dy * k;
   }
 }
 
@@ -428,12 +471,14 @@ function boneMinLength(s: Skeleton) {
 // ---- Focus migration ----
 
 function updateFocus(s: Skeleton, dt: number, rawAx: number, rawAy: number) {
+  if (s.dragJoint) return;
+
   s.focusTimer += dt * 1000;
   if (s.focusTimer < s.focusInterval) return;
   s.focusTimer = 0;
   s.focusInterval = 4500 + Math.random() * 2500;
 
-  if (Math.random() > 0.38) return;
+  if (Math.random() > 0.30) return;
 
   const neighbors = ADJ[s.activeJoint];
   if (!neighbors.length) return;
@@ -498,9 +543,9 @@ export function driveSkeleton(
     tiltTarget = Math.atan2(ay, ax) * 0.28;
     tiltTarget = Math.max(-0.55, Math.min(0.55, tiltTarget));
   }
-  const prevTilt = s.tiltSmoothed;
+  const poseTilt = s.tiltSmoothed;
   s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.058;
-  const dTilt = s.tiltSmoothed - prevTilt;
+  const dTilt = s.tiltSmoothed - poseTilt;
 
   updateFocus(s, dt, ax, ay);
 
@@ -511,48 +556,53 @@ export function driveSkeleton(
   const phaseSpread = (1 - s._rhythm) * 0.9;
   const t = performance.now() / 1000;
   const { x: comx, y: comy } = comXY(s.joints);
+  const active = s.activeJoint;
+  const aj = s.joints[active];
+  const DRAG_SPRING = 38;
 
   for (const j of Object.values(s.joints)) {
-    const hops = s.distances[j.name] ?? 7;
-    const c = conductance(hops);
-    const phaseOff = hops * phaseSpread * 0.35;
+    if (s.dragJoint === j.name) {
+      j.fx += (s.dragX - j.x) * DRAG_SPRING;
+      j.fy += (s.dragY - j.y) * DRAG_SPRING;
+      continue;
+    }
 
-    // driven force
-    j.fx += fdx * forceMag * c;
-    j.fy += fdy * forceMag * c;
+    if (j.name !== active) continue;
 
-    // breathing
-    const rx = j.x - comx, ry = j.y - comy;
+    const phaseOff = phaseSpread * 0.35;
+
+    j.fx += fdx * forceMag;
+    j.fy += fdy * forceMag;
+
+    const rx = aj.x - comx, ry = aj.y - comy;
     const rl = Math.hypot(rx, ry) || 1e-8;
     const ux = rx / rl, uy = ry / rl;
-    const off = (JOINT_NAMES.indexOf(j.name) / JOINT_NAMES.length) * Math.PI * 2;
+    const off = (JOINT_NAMES.indexOf(active) / JOINT_NAMES.length) * Math.PI * 2;
     const breathe = (0.04 + amp * 0.22 + motionMag * 0.16) * P.breatheScale *
       (groundedStart ? 0.48 : 1) *
       Math.sin(s.phase + off + phaseOff);
     j.fx += ux * breathe; j.fy += uy * breathe;
 
-    // spontaneous drift — intentionally small
-    const spontW = ((1 - c) * 0.03 + 0.006) * P.driftScale;
+    const spontW = 0.036 * P.driftScale;
     j.fx += Math.sin(t * j.driftFreq + j.driftPhase) * j.driftAmp * spontW;
     j.fy += Math.cos(t * j.driftFreq * 0.7 + j.driftPhase) * j.driftAmp * spontW;
 
-    // torque
     if (rawLen > 0.025) {
       const px = -fdy, py = fdx;
       const tw = (px * -uy + py * ux) * rawLen * (0.6 + motionMag * 0.45);
-      j.fx += -uy * tw * c; j.fy += ux * tw * c;
+      j.fx += -uy * tw; j.fy += ux * tw;
     }
   }
 
-  spreadPressure(s);
+  applyPosturalSupport(s, groundedStart, active, poseTilt);
+  spreadPressure(s, 0.11);
   boneMinLength(s);
   adaptRest(s);
   tryJumpAndAirPhysics(s, dt, rawLen, motionMag, amp);
   accumulateGravity(s);
-  integrate(s, dt, 1 + motionMag * 0.4);
-  solve(s, 7);
-  applyJointAngleLimits(s);
-  applyJointAngleLimits(s);
+  integrate(s, dt, 1 + motionMag * 0.32);
+  solve(s, 10);
+  applyJointAngleLimits(s, poseTilt);
   resolveGround(s);
   applyGroundFriction(s);
   lockCOMHorizontal(s);
@@ -715,10 +765,12 @@ export function applySkeletonFusion(
     sj.fx += (dx / dist) * f; sj.fy += (dy / dist) * f;
     pj.fx -= (dx / dist) * f; pj.fy -= (dy / dist) * f;
   }
+  applyPosturalSupport(self, isGrounded(self), self.activeJoint, self.tiltSmoothed);
+  applyPosturalSupport(peer, isGrounded(peer), peer.activeJoint, peer.tiltSmoothed);
   accumulateGravity(self);
   accumulateGravity(peer);
   integrate(self, dt); integrate(peer, dt);
-  solve(self, 3); solve(peer, 3);
+  solve(self, 5); solve(peer, 5);
   resolveGround(self); resolveGround(peer);
   lockCOMHorizontal(self); lockCOMHorizontal(peer);
 }
@@ -759,6 +811,44 @@ export function getSkeletonPoints(s: Skeleton): Record<string, { x: number; y: n
 
 export function getSkeletonBones(s: Skeleton): [string, string][] {
   return s.bones.filter((b) => b.render).map((b) => [b.a, b.b]);
+}
+
+const HIT_PAD = 7;
+
+export function hitTestSkeletonJoint(s: Skeleton, wx: number, wy: number): string | null {
+  const hd = s.joints.head;
+  const hr = SKEL_PARAMS.headRadius + HIT_PAD;
+  if (Math.hypot(wx - hd.x, wy - hd.y) <= hr) return "head";
+
+  let best: string | null = null;
+  let bestD = Infinity;
+  for (const j of Object.values(s.joints)) {
+    if (j.name === "head") continue;
+    const r = (j.name === s.activeJoint ? ACTIVE_NR : NR) + HIT_PAD;
+    const d = Math.hypot(wx - j.x, wy - j.y);
+    if (d <= r && d < bestD) {
+      bestD = d;
+      best = j.name;
+    }
+  }
+  return best;
+}
+
+export function skeletonBeginDrag(s: Skeleton, joint: string, x: number, y: number): void {
+  s.dragJoint = joint;
+  s.dragX = x;
+  s.dragY = y;
+  s.activeJoint = joint;
+  s.distances = computeDistances(joint);
+}
+
+export function skeletonUpdateDrag(s: Skeleton, x: number, y: number): void {
+  s.dragX = x;
+  s.dragY = y;
+}
+
+export function skeletonEndDrag(s: Skeleton): void {
+  s.dragJoint = null;
 }
 
 export { JOINT_NAMES };
