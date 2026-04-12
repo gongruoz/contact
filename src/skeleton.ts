@@ -17,25 +17,11 @@ export const SKEL_PARAMS = {
   forceScale: 6.2,
   driftScale: 0.35,
   breatheScale: 0.55,
-  /** Bone constraint strength (higher = more rigid, resists collapse). */
-  stiffness: 0.14,
+  stiffness: 0.11,
   leanAmount: 45,
   headRadius: 8,
   peerAttraction: 0.06,
   snapDist: 22,
-  /** Downward acceleration (canvas +y = down). Kept moderate vs postural tone. */
-  gravity: 0.72,
-  /**
-   * Global muscle tone: pulls every joint toward standing pose in the lean+tilt frame.
-   * Without this, gravity collapses a single-driven chain.
-   */
-  postureStrength: 1,
-  /** Max deviation of each bone from its rest direction (radians). */
-  jointLimitRad: 0.58,
-  /** Rare jump impulse when motion is strong while grounded. */
-  jumpImpulse: 7,
-  /** Extra spin during air (radians/s scale). */
-  airFlipScale: 2.4,
 };
 
 // ---- Types ----
@@ -72,9 +58,6 @@ export interface Skeleton {
   smRawX: number; smRawY: number;
   _amp: number; _freq: number; _axis: number; _smooth: number;
   _speed: number; _rhythm: number;
-  /** Angular velocity for occasional in-air tumble (rad/s-ish). */
-  airSpin: number;
-  jumpCooldown: number;
   /** Direct manipulation: null when not dragging. */
   dragJoint: string | null;
   dragX: number;
@@ -86,67 +69,49 @@ export interface SkeletonMergePair {
   strength: number;
 }
 
-// ---- Joint definitions — more anatomical ----
+// ---- Joint definitions — p1: inverted △ torso, 3-point limbs (shoulder–elbow–hand, hip–knee–foot) ----
 
 const REST_POSITIONS: Record<string, { x: number; y: number }> = {
   head:       { x: 0,    y: -118 },
-  torso_top:  { x: 0,    y: -90  },
-  torso_bl:   { x: -24,  y: -26  },
-  torso_br:   { x: 24,   y: -26  },
-  shoulder_l: { x: -44,  y: -78  },
-  shoulder_r: { x: 44,   y: -78  },
-  hand_l:     { x: -74,  y: 6    },
-  hand_r:     { x: 74,   y: 6    },
-  hip:        { x: 0,    y: 6    },
-  foot_l:     { x: -28,  y: 115  },
-  foot_r:     { x: 28,   y: 115  },
+  shoulder_l: { x: -40,  y: -78  },
+  shoulder_r: { x: 40,   y: -78  },
+  hip:        { x: 0,    y: 8    },
+  elbow_l:    { x: -54,  y: -36  },
+  elbow_r:    { x: 54,   y: -36  },
+  hand_l:     { x: -70,  y: 10   },
+  hand_r:     { x: 70,   y: 10   },
+  knee_l:     { x: -22,  y: 62   },
+  knee_r:     { x: 22,   y: 62   },
+  foot_l:     { x: -28,  y: 116  },
+  foot_r:     { x: 28,   y: 116  },
 };
 
 const BONE_DEFS: { a: string; b: string; render: boolean }[] = [
-  // neck (physics only — invisible, shorter than before)
-  { a: "head",       b: "torso_top",  render: false },
-  // torso triangle + light brace
-  { a: "torso_top",  b: "torso_bl",   render: true  },
-  { a: "torso_bl",   b: "torso_br",   render: true  },
-  { a: "torso_br",   b: "torso_top",  render: true  },
-  { a: "torso_top",  b: "torso_br",   render: false },
-  // arms: shoulder ↔ hand (two points each side)
-  { a: "shoulder_l", b: "torso_top",  render: true  },
-  { a: "shoulder_r", b: "torso_top",  render: true  },
-  { a: "shoulder_l", b: "hand_l",     render: true  },
-  { a: "shoulder_r", b: "hand_r",     render: true  },
-  // legs: single hip, hip ↔ foot (two points each side)
-  { a: "torso_bl",   b: "hip",        render: true  },
-  { a: "torso_br",   b: "hip",        render: true  },
-  { a: "hip",        b: "foot_l",     render: true  },
-  { a: "hip",        b: "foot_r",     render: true  },
+  // neck: invisible — head to shoulders for stability
+  { a: "head",       b: "shoulder_l", render: false },
+  { a: "head",       b: "shoulder_r", render: false },
+  // torso: inverted triangle (shoulder line + sides to single hip)
+  { a: "shoulder_l", b: "shoulder_r", render: true  },
+  { a: "shoulder_l", b: "hip",        render: true  },
+  { a: "shoulder_r", b: "hip",        render: true  },
+  // arms: 3 points
+  { a: "shoulder_l", b: "elbow_l",    render: true  },
+  { a: "elbow_l",    b: "hand_l",     render: true  },
+  { a: "shoulder_r", b: "elbow_r",    render: true  },
+  { a: "elbow_r",    b: "hand_r",     render: true  },
+  // legs: 3 points from single hip
+  { a: "hip",        b: "knee_l",     render: true  },
+  { a: "knee_l",     b: "foot_l",     render: true  },
+  { a: "hip",        b: "knee_r",     render: true  },
+  { a: "knee_r",     b: "foot_r",     render: true  },
   // structural bracing
-  { a: "shoulder_l", b: "shoulder_r", render: false },
-  { a: "torso_bl",   b: "foot_l",     render: false },
-  { a: "torso_br",   b: "foot_r",     render: false },
+  { a: "shoulder_l", b: "knee_r",     render: false },
+  { a: "shoulder_r", b: "knee_l",     render: false },
 ];
 
 const JOINT_NAMES = Object.keys(REST_POSITIONS);
-const TORSO_JOINTS = new Set(["torso_top", "torso_bl", "torso_br"]);
+const TORSO_JOINTS = new Set(["shoulder_l", "shoulder_r", "hip"]);
 const EXTREMITIES = new Set(["hand_l", "hand_r", "foot_l", "foot_r"]);
-
-/** Feet rest Y offset from anchor (cy + leanY); matches REST_POSITIONS.foot_*.y */
-const FOOT_REST_Y = REST_POSITIONS.foot_l.y;
-
-/** Per-bone max angle deviation from anatomical rest (radians); long limbs slightly looser. */
-const BONE_ANGLE_LIMITS: { a: string; b: string; maxDev: number }[] = [
-  { a: "torso_top", b: "torso_bl", maxDev: 0.38 },
-  { a: "torso_bl", b: "torso_br", maxDev: 0.4 },
-  { a: "torso_br", b: "torso_top", maxDev: 0.38 },
-  { a: "shoulder_l", b: "torso_top", maxDev: 0.36 },
-  { a: "shoulder_r", b: "torso_top", maxDev: 0.36 },
-  { a: "shoulder_l", b: "hand_l", maxDev: 0.58 },
-  { a: "shoulder_r", b: "hand_r", maxDev: 0.58 },
-  { a: "torso_bl", b: "hip", maxDev: 0.42 },
-  { a: "torso_br", b: "hip", maxDev: 0.42 },
-  { a: "hip", b: "foot_l", maxDev: 0.5 },
-  { a: "hip", b: "foot_r", maxDev: 0.5 },
-];
 
 // ---- Adjacency ----
 
@@ -164,13 +129,15 @@ function mkJoint(name: string, wx: number, wy: number): Joint {
   const x = wx + rest.x, y = wy + rest.y;
   const isExtrem = EXTREMITIES.has(name);
   const isTorso = TORSO_JOINTS.has(name);
+  const isHead = name === "head";
   return {
     name, x, y, px: x, py: y, fx: 0, fy: 0,
     restX: rest.x, restY: rest.y,
     driftFreq: 0.15 + Math.random() * 0.35,
     driftAmp: isTorso ? 0.4 + Math.random() * 0.6
+            : isHead ? 0.45 + Math.random() * 0.55
             : isExtrem ? 1.2 + Math.random() * 1.8
-            : 0.6 + Math.random() * 1.0,
+            : 0.65 + Math.random() * 0.95,
     driftPhase: Math.random() * Math.PI * 2,
   };
 }
@@ -189,7 +156,7 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
   const s: Skeleton = {
     joints, bones, cx, cy,
     phase: Math.random() * Math.PI * 2,
-    activeJoint: "torso_top",
+    activeJoint: "hip",
     distances: {},
     focusTimer: 0,
     focusInterval: 4500 + Math.random() * 2500,
@@ -197,8 +164,6 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
     smRawX: 0, smRawY: 0,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
     _speed: 0, _rhythm: 0,
-    airSpin: 0,
-    jumpCooldown: 0,
     dragJoint: null,
     dragX: 0,
     dragY: 0,
@@ -229,133 +194,13 @@ function comXY(joints: Record<string, Joint>) {
   return { x: x / n, y: y / n };
 }
 
-/** Horizontal anchor only — vertical pose comes from gravity + floor. */
-function lockCOMHorizontal(s: Skeleton) {
-  const { x: mx } = comXY(s.joints);
-  const ax = s.cx + s.leanX;
-  const dx = ax - mx;
+function lockCOM(s: Skeleton) {
+  const { x: mx, y: my } = comXY(s.joints);
+  const ax = s.cx + s.leanX, ay = s.cy + s.leanY;
+  const dx = ax - mx, dy = ay - my;
   for (const j of Object.values(s.joints)) {
-    j.x += dx;
-    j.px += dx;
-  }
-}
-
-function groundY(s: Skeleton): number {
-  return s.cy + s.leanY + FOOT_REST_Y;
-}
-
-function isGrounded(s: Skeleton): boolean {
-  const gy = groundY(s);
-  const fl = s.joints.foot_l, fr = s.joints.foot_r;
-  return Math.max(fl.y, fr.y) >= gy - 7;
-}
-
-/** Lift figure if feet penetrate floor; damp foot Verlet on impact. */
-function resolveGround(s: Skeleton) {
-  const gy = groundY(s);
-  const fl = s.joints.foot_l, fr = s.joints.foot_r;
-  const lowest = Math.max(fl.y, fr.y);
-  if (lowest > gy) {
-    const shift = lowest - gy;
-    for (const j of Object.values(s.joints)) {
-      j.y -= shift;
-      j.py -= shift;
-    }
-    const damp = 0.42;
-    fl.py = fl.y - (fl.y - fl.py) * damp;
-    fr.py = fr.y - (fr.y - fr.py) * damp;
-  }
-}
-
-function applyGroundFriction(s: Skeleton) {
-  if (!isGrounded(s)) return;
-  const f = 0.84;
-  for (const j of [s.joints.foot_l, s.joints.foot_r]) {
-    j.px = j.x - (j.x - j.px) * f;
-  }
-}
-
-function accumulateGravity(s: Skeleton) {
-  const g = SKEL_PARAMS.gravity;
-  for (const j of Object.values(s.joints)) {
-    let w = 0.95;
-    if (j.name === "foot_l" || j.name === "foot_r") w = 1.12;
-    else if (j.name === "hip") w = 1.06;
-    else if (j.name === "head") w = 0.74;
-    else if (j.name.startsWith("hand") || j.name.startsWith("shoulder")) w = 0.8;
-    j.fy += g * w;
-  }
-}
-
-function restVec(ax: string, bx: string): { dx: number; dy: number } {
-  const ra = REST_POSITIONS[ax], rb = REST_POSITIONS[bx];
-  return { dx: rb.x - ra.x, dy: rb.y - ra.y };
-}
-
-/** Clamp bone headings toward anatomical rest directions (tilt-aligned model frame). */
-function applyJointAngleLimits(s: Skeleton, modelTilt: number) {
-  const scale = SKEL_PARAMS.jointLimitRad / 0.58;
-  const th = modelTilt;
-  for (const { a, b, maxDev } of BONE_ANGLE_LIMITS) {
-    const ja = s.joints[a], jb = s.joints[b];
-    if (!ja || !jb) continue;
-    const maxR = maxDev * scale;
-    const { dx: rdx, dy: rdy } = restVec(a, b);
-    const ar = Math.atan2(rdy, rdx) + th;
-
-    const dx = jb.x - ja.x, dy = jb.y - ja.y;
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-6) continue;
-    const ac = Math.atan2(dy, dx);
-    let delta = ac - ar;
-    while (delta > Math.PI) delta -= Math.PI * 2;
-    while (delta < -Math.PI) delta += Math.PI * 2;
-    const clamped = Math.max(-maxR, Math.min(maxR, delta));
-    if (Math.abs(clamped - delta) < 1e-5) continue;
-    const acNew = ar + clamped;
-    jb.x = ja.x + Math.cos(acNew) * len;
-    jb.y = ja.y + Math.sin(acNew) * len;
-  }
-}
-
-function tryJumpAndAirPhysics(
-  s: Skeleton, dt: number,
-  rawLen: number, motionMag: number, amp: number,
-) {
-  if (s.dragJoint) return;
-
-  const P = SKEL_PARAMS;
-  const gy = groundY(s);
-  const fl = s.joints.foot_l, fr = s.joints.foot_r;
-  const maxFootY = Math.max(fl.y, fr.y);
-  const grounded = maxFootY >= gy - 8;
-
-  s.jumpCooldown = Math.max(0, s.jumpCooldown - dt);
-
-  if (grounded && s.jumpCooldown <= 0 && motionMag * amp > 0.48 && s._speed > 0.32) {
-    if (Math.random() < dt * 1.65) {
-      s.jumpCooldown = 1.1 + Math.random() * 1.1;
-      const imp = P.jumpImpulse * (0.55 + motionMag * 0.85 + amp * 0.35);
-      const lift = (j: Joint, mul: number) => { j.py = j.y + imp * mul; };
-      lift(s.joints.hip, 1.15);
-      lift(s.joints.torso_top, 0.9);
-      lift(s.joints.torso_bl, 0.72);
-      lift(s.joints.torso_br, 0.72);
-      lift(fl, 0.45);
-      lift(fr, 0.45);
-      if (Math.random() < 0.2) {
-        s.airSpin = (Math.random() < 0.5 ? -1 : 1) * P.airFlipScale *
-          (0.55 + motionMag * 0.9 + rawLen * 0.4);
-      }
-    }
-  }
-
-  if (!grounded) {
-    s.airSpin *= 0.988;
-    s.airSpin += (Math.random() - 0.5) * rawLen * motionMag * 0.055 * P.airFlipScale;
-    s.airSpin = Math.max(-3.8, Math.min(3.8, s.airSpin));
-  } else {
-    s.airSpin *= 0.72;
+    j.x += dx; j.y += dy;
+    j.px += dx; j.py += dy;
   }
 }
 
@@ -416,40 +261,6 @@ function spreadPressure(s: Skeleton, strength = 0.2) {
       const push = ((14 - d) / 14) * strength;
       j.fx += (dx / d) * push; j.fy += (dy / d) * push;
     }
-  }
-}
-
-/**
- * Standing tone: pulls joints toward the anatomical layout expressed in the current
- * lean+tilt frame. Real humans use continuous postural control; this is the analogue.
- */
-function applyPosturalSupport(s: Skeleton, grounded: boolean, active: string, modelTilt: number) {
-  const P = SKEL_PARAMS;
-  const ax = s.cx + s.leanX;
-  const ay = s.cy + s.leanY;
-  const th = modelTilt;
-  const c = Math.cos(th), si = Math.sin(th);
-  const airMul = grounded ? 1 : 0.62;
-  const ps = P.postureStrength;
-
-  for (const j of Object.values(s.joints)) {
-    if (s.dragJoint === j.name) continue;
-
-    const rx = j.restX * c - j.restY * si;
-    const ry = j.restX * si + j.restY * c;
-    const tx = ax + rx, ty = ay + ry;
-    const dx = tx - j.x, dy = ty - j.y;
-
-    let k = 0.48;
-    if (TORSO_JOINTS.has(j.name) || j.name === "hip") k = 0.82;
-    else if (EXTREMITIES.has(j.name)) k = 0.34;
-    else if (j.name === "head") k = 0.46;
-
-    if (j.name === active) k *= 0.26;
-    k *= airMul * ps;
-
-    j.fx += dx * k;
-    j.fy += dy * k;
   }
 }
 
@@ -527,7 +338,6 @@ export function driveSkeleton(
   const amp = s._amp;
   const motionMag = Math.min(1, rawLen * 1.0);
   const express = Math.max(0.25, Math.min(1.15, 0.3 + amp * 0.32 + motionMag * 0.4));
-  const groundedStart = isGrounded(s);
 
   const P = SKEL_PARAMS;
   const eStiff = Math.max(0.035, (P.stiffness + s._smooth * 0.06) * (1 - 0.12 * motionMag));
@@ -543,9 +353,9 @@ export function driveSkeleton(
     tiltTarget = Math.atan2(ay, ax) * 0.28;
     tiltTarget = Math.max(-0.55, Math.min(0.55, tiltTarget));
   }
-  const poseTilt = s.tiltSmoothed;
+  const prevTilt = s.tiltSmoothed;
   s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.058;
-  const dTilt = s.tiltSmoothed - poseTilt;
+  const dTilt = s.tiltSmoothed - prevTilt;
 
   updateFocus(s, dt, ax, ay);
 
@@ -579,7 +389,6 @@ export function driveSkeleton(
     const ux = rx / rl, uy = ry / rl;
     const off = (JOINT_NAMES.indexOf(active) / JOINT_NAMES.length) * Math.PI * 2;
     const breathe = (0.04 + amp * 0.22 + motionMag * 0.16) * P.breatheScale *
-      (groundedStart ? 0.48 : 1) *
       Math.sin(s.phase + off + phaseOff);
     j.fx += ux * breathe; j.fy += uy * breathe;
 
@@ -594,21 +403,13 @@ export function driveSkeleton(
     }
   }
 
-  applyPosturalSupport(s, groundedStart, active, poseTilt);
-  spreadPressure(s, 0.11);
+  spreadPressure(s, 0.1);
   boneMinLength(s);
   adaptRest(s);
-  tryJumpAndAirPhysics(s, dt, rawLen, motionMag, amp);
-  accumulateGravity(s);
-  integrate(s, dt, 1 + motionMag * 0.32);
-  solve(s, 10);
-  applyJointAngleLimits(s, poseTilt);
-  resolveGround(s);
-  applyGroundFriction(s);
-  lockCOMHorizontal(s);
-  const airD = dTilt + s.airSpin * dt * 0.88;
-  rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, airD);
-  resolveGround(s);
+  integrate(s, dt, 1 + motionMag * 0.42);
+  solve(s, 9);
+  rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);
+  lockCOM(s);
 }
 
 // ---- Rendering ----
@@ -632,7 +433,7 @@ export function drawSkeleton(
   const fillRgb = role === "self" ? RGB_SELF_FILL : RGB_PEER_FILL;
   const lw = role === "self" ? 1.0 : 0.85;
 
-  // bones (skip neck — head→torso is invisible)
+  // bones (neck head→shoulders is invisible)
   for (const b of s.bones) {
     if (!b.render) continue;
     const ja = s.joints[b.a], jb = s.joints[b.b];
@@ -732,8 +533,8 @@ export function drawPeerThreads(
 // ---- Merge (similarity-gated, kept for backward compat) ----
 
 const MERGE_REGIONS: { threshold: number; joints: string[] }[] = [
-  { threshold: 0.15, joints: ["torso_top", "torso_bl", "torso_br", "hip"] },
-  { threshold: 0.35, joints: ["shoulder_l", "shoulder_r"] },
+  { threshold: 0.15, joints: ["shoulder_l", "shoulder_r", "hip"] },
+  { threshold: 0.35, joints: ["elbow_l", "elbow_r", "knee_l", "knee_r"] },
   { threshold: 0.55, joints: ["head"] },
   { threshold: 0.78, joints: ["hand_l", "hand_r", "foot_l", "foot_r"] },
 ];
@@ -765,14 +566,9 @@ export function applySkeletonFusion(
     sj.fx += (dx / dist) * f; sj.fy += (dy / dist) * f;
     pj.fx -= (dx / dist) * f; pj.fy -= (dy / dist) * f;
   }
-  applyPosturalSupport(self, isGrounded(self), self.activeJoint, self.tiltSmoothed);
-  applyPosturalSupport(peer, isGrounded(peer), peer.activeJoint, peer.tiltSmoothed);
-  accumulateGravity(self);
-  accumulateGravity(peer);
   integrate(self, dt); integrate(peer, dt);
   solve(self, 5); solve(peer, 5);
-  resolveGround(self); resolveGround(peer);
-  lockCOMHorizontal(self); lockCOMHorizontal(peer);
+  lockCOM(self); lockCOM(peer);
 }
 
 export function drawSkeletonMergeEffects(
