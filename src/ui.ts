@@ -160,3 +160,64 @@ export function initFigureToolbar(handlers: {
   btnModeBody.addEventListener("click", handlers.onBody);
   btnTrail.addEventListener("click", handlers.onTrail);
 }
+
+// ---- Param sidebar ----
+
+const sidebar = document.getElementById("param-sidebar")!;
+const btnToggle = document.getElementById("btn-toggle-sidebar") as HTMLButtonElement;
+let sidebarOpen = false;
+
+btnToggle.addEventListener("click", () => {
+  sidebarOpen = !sidebarOpen;
+  sidebar.classList.toggle("open", sidebarOpen);
+  btnToggle.textContent = sidebarOpen ? "close" : "tune";
+});
+
+export interface ParamDef {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+}
+
+export function initParamSidebar(
+  defs: ParamDef[],
+  values: Record<string, number>,
+  onChange: (key: string, val: number) => void,
+) {
+  const container = sidebar.querySelector(".ps-title")!;
+
+  for (const def of defs) {
+    const group = document.createElement("div");
+    group.className = "ps-group";
+
+    const label = document.createElement("div");
+    label.className = "ps-label";
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = def.label;
+    const valSpan = document.createElement("span");
+    valSpan.className = "ps-val";
+    valSpan.textContent = String(values[def.key]);
+    valSpan.id = `ps-val-${def.key}`;
+    label.appendChild(nameSpan);
+    label.appendChild(valSpan);
+
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(def.min);
+    input.max = String(def.max);
+    input.step = String(def.step);
+    input.value = String(values[def.key]);
+    input.addEventListener("input", () => {
+      const v = parseFloat(input.value);
+      valSpan.textContent = String(v);
+      onChange(def.key, v);
+    });
+
+    group.appendChild(label);
+    group.appendChild(input);
+    container.insertAdjacentElement("afterend", group);
+    container.parentNode!.appendChild(group);
+  }
+}

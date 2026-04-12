@@ -8,7 +8,7 @@ import {
 import {
   setHint, showRoomCode, showConnected, showDisconnected,
   onCreateRoom, onJoinRoom, onExitRoom, setStatus, setPeerError,
-  initFigureToolbar, syncFigureToolbar,
+  initFigureToolbar, syncFigureToolbar, initParamSidebar,
 } from "./ui";
 import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
 import {
@@ -20,6 +20,8 @@ import {
   createSkeleton, driveSkeleton, drawSkeleton,
   computeSkeletonMergePairs, applySkeletonFusion, drawSkeletonMergeEffects,
   getSkeletonPoints, getSkeletonBones,
+  applyPeerAttraction, drawPeerThreads,
+  SKEL_PARAMS,
   type Skeleton, type SkeletonMergePair,
 } from "./skeleton";
 import { TrailSystem } from "./trail";
@@ -267,6 +269,7 @@ function loop(time: number) {
 
     if (connected && peerFeatures !== null) {
       driveSkeleton(peerSkel, peerFeatures, peerRawAx, peerRawAy, dt);
+      applyPeerAttraction(selfSkel, peerSkel, dt);
       skelMerge = computeSkeletonMergePairs(similarity);
       applySkeletonFusion(selfSkel, peerSkel, skelMerge, dt);
     }
@@ -288,6 +291,7 @@ function loop(time: number) {
 
     if (connected && peerFeatures !== null) {
       drawSkeleton(ctx, peerSkel, 1, "peer");
+      drawPeerThreads(ctx, selfSkel, peerSkel, time);
       drawSkeletonMergeEffects(ctx, selfSkel, peerSkel, skelMerge, time);
     }
   }
@@ -418,6 +422,23 @@ async function init() {
     else if (e.key === "2") applyMode("skeleton");
     else if (e.key === "t" || e.key === "T") applyTrailToggle();
   });
+
+  initParamSidebar(
+    [
+      { key: "damping",         label: "damping",      min: 0.90, max: 0.995, step: 0.001 },
+      { key: "forceScale",      label: "force",        min: 1,    max: 15,    step: 0.5   },
+      { key: "driftScale",      label: "drift",        min: 0,    max: 1.5,   step: 0.05  },
+      { key: "breatheScale",    label: "breathe",      min: 0,    max: 2,     step: 0.05  },
+      { key: "stiffness",       label: "stiffness",    min: 0.01, max: 0.3,   step: 0.005 },
+      { key: "conductanceBase", label: "conductance",  min: 0.2,  max: 0.85,  step: 0.01  },
+      { key: "leanAmount",      label: "lean",         min: 0,    max: 100,   step: 1     },
+      { key: "headRadius",      label: "head size",    min: 3,    max: 18,    step: 0.5   },
+      { key: "peerAttraction",  label: "peer pull",    min: 0,    max: 0.3,   step: 0.005 },
+      { key: "snapDist",        label: "snap dist",    min: 5,    max: 60,    step: 1     },
+    ],
+    SKEL_PARAMS as unknown as Record<string, number>,
+    (key, val) => { (SKEL_PARAMS as unknown as Record<string, number>)[key] = val; },
+  );
 
   syncFigureToolbar(mode, selfTrail.enabled);
   requestAnimationFrame(loop);

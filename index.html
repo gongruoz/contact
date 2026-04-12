@@ -225,6 +225,89 @@
       border: 1px solid rgba(0,0,0,0.2);
       min-width: 4.6rem;
     }
+
+    /* ---- param sidebar ---- */
+    #param-sidebar {
+      position: fixed;
+      top: 0; right: 0;
+      width: 14rem;
+      height: 100vh;
+      overflow-y: auto;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(6px);
+      border-left: 1px solid rgba(0,0,0,0.10);
+      padding: 3.8rem 0.75rem 1.5rem;
+      z-index: 20;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+      pointer-events: auto;
+    }
+    #param-sidebar.open {
+      transform: translateX(0);
+    }
+    #param-sidebar .ps-title {
+      font-size: 0.78em;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+      color: #555;
+      margin-bottom: 0.8rem;
+      text-transform: uppercase;
+    }
+    #param-sidebar .ps-group {
+      margin-bottom: 0.55rem;
+    }
+    #param-sidebar .ps-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 0.76em;
+      color: #555;
+      margin-bottom: 0.15rem;
+    }
+    #param-sidebar .ps-val {
+      font-variant-numeric: tabular-nums;
+      color: #888;
+      min-width: 2.6em;
+      text-align: right;
+    }
+    #param-sidebar input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 3px;
+      background: rgba(0,0,0,0.12);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    #param-sidebar input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 10px; height: 10px;
+      background: #333;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+    }
+    #btn-toggle-sidebar {
+      appearance: none;
+      -webkit-appearance: none;
+      position: fixed;
+      bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
+      right: max(0.75rem, env(safe-area-inset-right, 0px));
+      z-index: 21;
+      font-family: inherit;
+      font-size: 0.78em;
+      font-weight: 300;
+      letter-spacing: inherit;
+      padding: 0.35rem 0.55rem;
+      border: 1px solid rgba(0,0,0,0.18);
+      background: rgba(255,255,255,0.85);
+      color: #666;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      pointer-events: auto;
+    }
+    #btn-toggle-sidebar:hover { background: #fafafa; color: #333; }
   </style>
 </head>
 <body>
@@ -238,6 +321,10 @@
       </div>
       <button type="button" id="btn-trail" class="figure-toolbar__btn">trail off</button>
     </div>
+    <div id="param-sidebar">
+      <div class="ps-title">parameters</div>
+    </div>
+    <button type="button" id="btn-toggle-sidebar" class="interactive">tune</button>
     <div id="connect-area" class="interactive">
       <div id="tagline"><span class="tagline-line1">show how you move · feel how they move</span><span class="tagline-line2">sync up to make contact</span></div>
       <div id="connect-controls">
