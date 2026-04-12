@@ -54,7 +54,7 @@ function mkP(x: number, y: number): Particle {
 }
 
 const N = 4;
-const R0 = 100;
+const R0 = 150;
 
 export function createSimplex(cx: number, cy: number): Simplex {
   const ps: Particle[] = [];
@@ -315,7 +315,7 @@ export function drawSimplex(
   if (opacity <= 0.01) return;
 
   const sA = role === "self" ? opacity * 0.52 : opacity * 0.55;
-  const fA = role === "self" ? opacity * 0.96 : opacity * 0.86;
+  const fA = 0;
   const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
   const fillRgb = role === "self" ? RGB_SELF_FILL : RGB_PEER_FILL;
   const lw = role === "self" ? 1.35 : 1.15;

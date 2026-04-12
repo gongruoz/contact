@@ -21,7 +21,6 @@ import {
   computeSkeletonMergePairs, applySkeletonFusion, drawSkeletonMergeEffects,
   getSkeletonPoints, getSkeletonBones,
   applyPeerAttraction, drawPeerThreads,
-  hitTestSkeletonJoint, skeletonBeginDrag, skeletonUpdateDrag, skeletonEndDrag,
   SKEL_PARAMS,
   type Skeleton, type SkeletonMergePair,
 } from "./skeleton";
@@ -50,7 +49,7 @@ let latestRawAx = 0;
 let latestRawAy = 0;
 
 type FigureMode = "simplex" | "skeleton";
-let mode: FigureMode = "simplex";
+let mode: FigureMode = "skeleton";
 
 let selfSimplex: Simplex;
 let peerSimplex: Simplex;
@@ -60,12 +59,8 @@ let peerSkel: Skeleton;
 const selfTrail = new TrailSystem();
 const peerTrail = new TrailSystem();
 
-let skelDragPointerId: number | null = null;
-
-function pointerToCanvasCss(ev: PointerEvent): { x: number; y: number } {
-  const rect = canvas.getBoundingClientRect();
-  return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
-}
+selfTrail.enabled = true;
+peerTrail.enabled = true;
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -404,13 +399,6 @@ async function init() {
 
   function applyMode(next: FigureMode) {
     if (mode === next) return;
-    if (mode === "skeleton" && skelDragPointerId !== null) {
-      try {
-        canvas.releasePointerCapture(skelDragPointerId);
-      } catch { /* not captured */ }
-      skeletonEndDrag(selfSkel);
-      skelDragPointerId = null;
-    }
     mode = next;
     selfTrail.clear();
     peerTrail.clear();
@@ -434,7 +422,7 @@ async function init() {
   window.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement) return;
     if (e.key === "1") applyMode("simplex");
-    else if (e.key === "2") applyMode("skeleton");
+    else if (e.key === "2") applyMode("skeleton"); // physique
     else if (e.key === "t" || e.key === "T") applyTrailToggle();
   });
 
@@ -455,36 +443,6 @@ async function init() {
   );
 
   syncFigureToolbar(mode, selfTrail.enabled);
-
-  canvas.addEventListener("pointerdown", (e) => {
-    if (mode !== "skeleton" || e.button !== 0) return;
-    const { x, y } = pointerToCanvasCss(e);
-    const joint = hitTestSkeletonJoint(selfSkel, x, y);
-    if (!joint) return;
-    e.preventDefault();
-    skeletonBeginDrag(selfSkel, joint, x, y);
-    skelDragPointerId = e.pointerId;
-    try {
-      canvas.setPointerCapture(e.pointerId);
-    } catch { /* ignore */ }
-  });
-
-  canvas.addEventListener("pointermove", (e) => {
-    if (skelDragPointerId === null || e.pointerId !== skelDragPointerId) return;
-    const { x, y } = pointerToCanvasCss(e);
-    skeletonUpdateDrag(selfSkel, x, y);
-  });
-
-  const endSkelDrag = (e: PointerEvent) => {
-    if (skelDragPointerId === null || e.pointerId !== skelDragPointerId) return;
-    try {
-      canvas.releasePointerCapture(e.pointerId);
-    } catch { /* ignore */ }
-    skeletonEndDrag(selfSkel);
-    skelDragPointerId = null;
-  };
-  canvas.addEventListener("pointerup", endSkelDrag);
-  canvas.addEventListener("pointercancel", endSkelDrag);
 
   requestAnimationFrame(loop);
 }

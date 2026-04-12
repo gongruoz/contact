@@ -25,11 +25,28 @@
     }
     #ui .interactive { pointer-events: auto; }
 
-    #hint {
+    /* Stack hint + toolbar so they never overlap (esp. narrow phones). */
+    #top-bar {
       position: fixed;
-      top: max(1.1rem, env(safe-area-inset-top, 0px));
-      left: 50%; transform: translateX(-50%);
-      width: min(92vw, 22rem);
+      top: max(0.55rem, env(safe-area-inset-top, 0px));
+      left: 0;
+      right: 0;
+      z-index: 11;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0 max(0.75rem, env(safe-area-inset-right, 0px)) 0 max(0.75rem, env(safe-area-inset-left, 0px));
+      pointer-events: none;
+    }
+    #top-bar #hint,
+    #top-bar #figure-toolbar {
+      pointer-events: auto;
+    }
+
+    #hint {
+      width: 100%;
+      max-width: min(92vw, 22rem);
       text-align: center;
       font-size: inherit;
       font-weight: 300;
@@ -181,15 +198,12 @@
     .hidden { display: none !important; }
 
     #figure-toolbar {
-      position: fixed;
-      top: max(1.1rem, env(safe-area-inset-top, 0px));
-      right: max(0.75rem, env(safe-area-inset-right, 0px));
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      justify-content: flex-end;
+      justify-content: center;
       gap: 0.35rem;
-      max-width: min(96vw, 20rem);
+      max-width: min(96vw, 22rem);
     }
     #figure-toolbar .figure-toolbar__seg {
       display: inline-flex;
@@ -236,7 +250,7 @@
       background: rgba(255,255,255,0.92);
       backdrop-filter: blur(6px);
       border-left: 1px solid rgba(0,0,0,0.10);
-      padding: 3.8rem 0.75rem 1.5rem;
+      padding: 5.25rem 0.75rem 1.5rem;
       z-index: 20;
       transform: translateX(100%);
       transition: transform 0.25s ease;
@@ -313,13 +327,15 @@
 <body>
   <canvas id="gl"></canvas>
   <div id="ui">
-    <div id="hint" class="interactive">move your mouse — make it dance</div>
-    <div id="figure-toolbar" class="interactive">
-      <div class="figure-toolbar__seg" role="group" aria-label="figure">
-        <button type="button" id="btn-mode-shape" class="figure-toolbar__btn figure-toolbar__btn--active">shape</button>
-        <button type="button" id="btn-mode-body" class="figure-toolbar__btn">body</button>
+    <div id="top-bar">
+      <div id="hint" class="interactive">move your mouse — make it dance</div>
+      <div id="figure-toolbar" class="interactive">
+        <div class="figure-toolbar__seg" role="group" aria-label="figure">
+          <button type="button" id="btn-mode-shape" class="figure-toolbar__btn">geometry</button>
+          <button type="button" id="btn-mode-body" class="figure-toolbar__btn figure-toolbar__btn--active">physique</button>
+        </div>
+        <button type="button" id="btn-trail" class="figure-toolbar__btn figure-toolbar__btn--active">trail on</button>
       </div>
-      <button type="button" id="btn-trail" class="figure-toolbar__btn">trail off</button>
     </div>
     <div id="param-sidebar">
       <div class="ps-title">parameters</div>

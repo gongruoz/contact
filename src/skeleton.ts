@@ -2,9 +2,7 @@ import type { Features } from "./dsp";
 import {
   fillSolidDot,
   RGB_MERGE,
-  RGB_PEER_FILL,
   RGB_PEER_STROKE,
-  RGB_SELF_FILL,
   RGB_SELF_STROKE,
   RGB_THREAD,
   strokeGappedLineEndFade,
@@ -19,9 +17,9 @@ export const SKEL_PARAMS = {
   breatheScale: 0.55,
   stiffness: 0.11,
   leanAmount: 45,
-  headRadius: 8,
+  headRadius: 12,
   peerAttraction: 0.06,
-  snapDist: 22,
+  snapDist: 33,
 };
 
 // ---- Types ----
@@ -58,10 +56,6 @@ export interface Skeleton {
   smRawX: number; smRawY: number;
   _amp: number; _freq: number; _axis: number; _smooth: number;
   _speed: number; _rhythm: number;
-  /** Direct manipulation: null when not dragging. */
-  dragJoint: string | null;
-  dragX: number;
-  dragY: number;
 }
 
 export interface SkeletonMergePair {
@@ -69,9 +63,13 @@ export interface SkeletonMergePair {
   strength: number;
 }
 
-// ---- Joint definitions — p1: inverted △ torso, 3-point limbs (shoulder–elbow–hand, hip–knee–foot) ----
+// ---- Joint definitions — p1: inverted △ torso, 3-point limbs; FIG_SCALE + narrow shoulders ----
 
-const REST_POSITIONS: Record<string, { x: number; y: number }> = {
+const FIG_SCALE = 1.5;
+/** Extra narrowing on shoulder x (torso reads smaller vs limbs). */
+const SHOULDER_X_NARROW = 0.66;
+
+const REST_TEMPLATE: Record<string, { x: number; y: number }> = {
   head:       { x: 0,    y: -118 },
   shoulder_l: { x: -40,  y: -78  },
   shoulder_r: { x: 40,   y: -78  },
@@ -85,6 +83,19 @@ const REST_POSITIONS: Record<string, { x: number; y: number }> = {
   foot_l:     { x: -28,  y: 116  },
   foot_r:     { x: 28,   y: 116  },
 };
+
+function buildRestPositions(): Record<string, { x: number; y: number }> {
+  const out: Record<string, { x: number; y: number }> = {};
+  for (const [name, p] of Object.entries(REST_TEMPLATE)) {
+    let x = p.x * FIG_SCALE;
+    const y = p.y * FIG_SCALE;
+    if (name === "shoulder_l" || name === "shoulder_r") x *= SHOULDER_X_NARROW;
+    out[name] = { x, y };
+  }
+  return out;
+}
+
+const REST_POSITIONS = buildRestPositions();
 
 const BONE_DEFS: { a: string; b: string; render: boolean }[] = [
   // neck: invisible — head to shoulders for stability
@@ -164,9 +175,6 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
     smRawX: 0, smRawY: 0,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
     _speed: 0, _rhythm: 0,
-    dragJoint: null,
-    dragX: 0,
-    dragY: 0,
   };
   s.distances = computeDistances(s.activeJoint);
   return s;
@@ -282,8 +290,6 @@ function boneMinLength(s: Skeleton) {
 // ---- Focus migration ----
 
 function updateFocus(s: Skeleton, dt: number, rawAx: number, rawAy: number) {
-  if (s.dragJoint) return;
-
   s.focusTimer += dt * 1000;
   if (s.focusTimer < s.focusInterval) return;
   s.focusTimer = 0;
@@ -368,15 +374,8 @@ export function driveSkeleton(
   const { x: comx, y: comy } = comXY(s.joints);
   const active = s.activeJoint;
   const aj = s.joints[active];
-  const DRAG_SPRING = 38;
 
   for (const j of Object.values(s.joints)) {
-    if (s.dragJoint === j.name) {
-      j.fx += (s.dragX - j.x) * DRAG_SPRING;
-      j.fy += (s.dragY - j.y) * DRAG_SPRING;
-      continue;
-    }
-
     if (j.name !== active) continue;
 
     const phaseOff = phaseSpread * 0.35;
@@ -414,10 +413,8 @@ export function driveSkeleton(
 
 // ---- Rendering ----
 
-const GAP = 7;
-const NR = 1.8;
-const ACTIVE_NR = 2.5;
-const HEAD_STROKE_W = 0.9;
+const GAP = 11;
+const NR = 2.7;
 
 export type DrawRole = "self" | "peer";
 
@@ -428,45 +425,14 @@ export function drawSkeleton(
   if (opacity <= 0.01) return;
 
   const sA = role === "self" ? opacity * 0.50 : opacity * 0.48;
-  const fA = role === "self" ? opacity * 0.94 : opacity * 0.82;
   const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
-  const fillRgb = role === "self" ? RGB_SELF_FILL : RGB_PEER_FILL;
   const lw = role === "self" ? 1.0 : 0.85;
 
-  // bones (neck head→shoulders is invisible)
+  // bones only — joints + head are transparent (no fill / stroke)
   for (const b of s.bones) {
     if (!b.render) continue;
     const ja = s.joints[b.a], jb = s.joints[b.b];
     strokeGappedLineEndFade(ctx, ja.x, ja.y, jb.x, jb.y, GAP, lw, strokeRgb, sA);
-  }
-
-  // joints (skip head — drawn separately as hollow circle)
-  for (const j of Object.values(s.joints)) {
-    if (j.name === "head") continue;
-    const isActive = j.name === s.activeJoint;
-    const r = isActive ? ACTIVE_NR : NR;
-    fillSolidDot(ctx, j.x, j.y, r, fillRgb, fA);
-  }
-
-  // head: hollow circle
-  const hd = s.joints.head;
-  const hr = SKEL_PARAMS.headRadius;
-  const [hr1, hg1, hb1] = strokeRgb;
-  ctx.beginPath();
-  ctx.arc(hd.x, hd.y, hr, 0, Math.PI * 2);
-  ctx.strokeStyle = `rgba(${hr1},${hg1},${hb1},${sA})`;
-  ctx.lineWidth = HEAD_STROKE_W;
-  ctx.stroke();
-
-  // active joint pulse ring
-  if (s.activeJoint !== "head") {
-    const aj = s.joints[s.activeJoint];
-    const pulse = 1.15 + 0.15 * Math.sin(s.phase * 1.3);
-    ctx.beginPath();
-    ctx.arc(aj.x, aj.y, ACTIVE_NR * pulse, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(${hr1},${hg1},${hb1},${opacity * 0.14})`;
-    ctx.lineWidth = 0.4;
-    ctx.stroke();
   }
 }
 
@@ -607,44 +573,6 @@ export function getSkeletonPoints(s: Skeleton): Record<string, { x: number; y: n
 
 export function getSkeletonBones(s: Skeleton): [string, string][] {
   return s.bones.filter((b) => b.render).map((b) => [b.a, b.b]);
-}
-
-const HIT_PAD = 7;
-
-export function hitTestSkeletonJoint(s: Skeleton, wx: number, wy: number): string | null {
-  const hd = s.joints.head;
-  const hr = SKEL_PARAMS.headRadius + HIT_PAD;
-  if (Math.hypot(wx - hd.x, wy - hd.y) <= hr) return "head";
-
-  let best: string | null = null;
-  let bestD = Infinity;
-  for (const j of Object.values(s.joints)) {
-    if (j.name === "head") continue;
-    const r = (j.name === s.activeJoint ? ACTIVE_NR : NR) + HIT_PAD;
-    const d = Math.hypot(wx - j.x, wy - j.y);
-    if (d <= r && d < bestD) {
-      bestD = d;
-      best = j.name;
-    }
-  }
-  return best;
-}
-
-export function skeletonBeginDrag(s: Skeleton, joint: string, x: number, y: number): void {
-  s.dragJoint = joint;
-  s.dragX = x;
-  s.dragY = y;
-  s.activeJoint = joint;
-  s.distances = computeDistances(joint);
-}
-
-export function skeletonUpdateDrag(s: Skeleton, x: number, y: number): void {
-  s.dragX = x;
-  s.dragY = y;
-}
-
-export function skeletonEndDrag(s: Skeleton): void {
-  s.dragJoint = null;
 }
 
 export { JOINT_NAMES };
