@@ -1,4 +1,14 @@
 import type { Features } from "./dsp";
+import {
+  fillDotRadialEndFade,
+  RGB_MERGE,
+  RGB_PEER_FILL,
+  RGB_PEER_STROKE,
+  RGB_SELF_FILL,
+  RGB_SELF_STROKE,
+  RGB_THREAD,
+  strokeGappedLineEndFade,
+} from "./lineGradient";
 
 // ---- Types ----
 
@@ -135,7 +145,7 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
     activeJoint: "torso",
     distances: {},
     focusTimer: 0,
-    focusInterval: 2500 + Math.random() * 1500,
+    focusInterval: 3800 + Math.random() * 2200,
     leanX: 0, leanY: 0, tiltSmoothed: 0,
     smRawX: 0, smRawY: 0,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
@@ -202,8 +212,10 @@ function rotateAroundAnchor(s: Skeleton, ax: number, ay: number, dTheta: number)
   }
 }
 
-const DAMP = 0.952;
-const ACC = 4000;
+const DAMP = 0.961;
+const ACC = 3300;
+const RAW_SMOOTH = 0.052;
+const RAW_DEAD = 0.016;
 
 function integrate(s: Skeleton, dt: number, impulseMul = 1) {
   const a = dt * dt * ACC * impulseMul;
@@ -279,9 +291,9 @@ function updateFocus(s: Skeleton, dt: number, rawAx: number, rawAy: number) {
   s.focusTimer += dt * 1000;
   if (s.focusTimer < s.focusInterval) return;
   s.focusTimer = 0;
-  s.focusInterval = 2500 + Math.random() * 1500;
+  s.focusInterval = 3800 + Math.random() * 2200;
 
-  if (Math.random() > 0.4) return;
+  if (Math.random() > 0.45) return;
 
   const neighbors = ADJ[s.activeJoint];
   if (!neighbors.length) return;
@@ -297,7 +309,7 @@ function updateFocus(s: Skeleton, dt: number, rawAx: number, rawAy: number) {
       const dy = nj.restY - active.restY;
       const len = Math.hypot(dx, dy) || 1;
       const dot = (dx / len) * rawAx + (dy / len) * rawAy;
-      return { name: n, w: dot > 0.1 ? 3 : 1 };
+      return { name: n, w: dot > 0.18 ? 3 : 1 };
     });
     let total = 0;
     for (const w of weighted) total += w.w;
@@ -318,7 +330,12 @@ export function driveSkeleton(
   rawAx: number, rawAy: number,
   dt: number,
 ) {
-  const lr = 0.065;
+  s.smRawX += RAW_SMOOTH * (rawAx - s.smRawX);
+  s.smRawY += RAW_SMOOTH * (rawAy - s.smRawY);
+  let ax = s.smRawX, ay = s.smRawY;
+  if (Math.hypot(ax, ay) < RAW_DEAD) ax = 0, ay = 0;
+
+  const lr = 0.036;
   s._amp += (f.amplitude - s._amp) * lr;
   s._freq += (f.frequency - s._freq) * lr;
   s._axis += (f.axis - s._axis) * lr;
@@ -326,45 +343,45 @@ export function driveSkeleton(
   s._speed += (f.speed - s._speed) * lr;
   s._rhythm += (f.rhythm - s._rhythm) * lr;
 
-  const spd = 0.3 + s._freq * 2.8;
+  const spd = 0.2 + s._freq * 1.85;
   s.phase += spd * dt;
 
-  const rawLen = Math.hypot(rawAx, rawAy);
+  const rawLen = Math.hypot(ax, ay);
   const amp = s._amp;
-  const motionMag = Math.min(1, rawLen * 1.2);
-  const express = Math.max(0.3, Math.min(1.4, 0.35 + amp * 0.4 + motionMag * 0.55));
+  const motionMag = Math.min(1, rawLen * 1.05);
+  const express = Math.max(0.28, Math.min(1.28, 0.32 + amp * 0.36 + motionMag * 0.45));
 
-  const eStiff = Math.max(0.03, (0.06 + s._smooth * 0.08) * (1 - 0.2 * motionMag));
-  const bStiff = Math.max(0.01, (0.02 + s._smooth * 0.03) * (1 - 0.15 * motionMag));
+  const eStiff = Math.max(0.034, (0.064 + s._smooth * 0.085) * (1 - 0.16 * motionMag));
+  const bStiff = Math.max(0.012, (0.022 + s._smooth * 0.032) * (1 - 0.12 * motionMag));
   for (const b of s.bones) b.stiffness = b.render ? eStiff : bStiff;
 
   // lean toward motion
-  const maxLean = 70 * express;
-  const leanTx = rawAx * maxLean;
-  const leanTy = rawAy * maxLean;
-  s.leanX += (leanTx - s.leanX) * 0.14;
-  s.leanY += (leanTy - s.leanY) * 0.14;
+  const maxLean = 58 * express;
+  const leanTx = ax * maxLean;
+  const leanTy = ay * maxLean;
+  s.leanX += (leanTx - s.leanX) * 0.085;
+  s.leanY += (leanTy - s.leanY) * 0.085;
 
   // tilt
   let tiltTarget = 0;
-  if (rawLen > 0.02) {
-    tiltTarget = Math.atan2(rawAy, rawAx) * 0.4;
-    tiltTarget = Math.max(-0.75, Math.min(0.75, tiltTarget));
+  if (rawLen > 0.038) {
+    tiltTarget = Math.atan2(ay, ax) * 0.32;
+    tiltTarget = Math.max(-0.62, Math.min(0.62, tiltTarget));
   }
   const prevTilt = s.tiltSmoothed;
-  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.12;
+  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.072;
   const dTilt = s.tiltSmoothed - prevTilt;
 
   // focus migration
-  updateFocus(s, dt, rawAx, rawAy);
+  updateFocus(s, dt, ax, ay);
 
-  // force direction from raw input
-  const fdx = rawLen > 0.01 ? rawAx / rawLen : 0;
-  const fdy = rawLen > 0.01 ? rawAy / rawLen : 0;
-  const forceMag = amp * Math.max(0.3, s._speed) * 14;
+  // force direction from smoothed input
+  const fdx = rawLen > 0.012 ? ax / rawLen : 0;
+  const fdy = rawLen > 0.012 ? ay / rawLen : 0;
+  const forceMag = amp * Math.max(0.25, s._speed) * 8.5;
 
   // rhythm → phase spread: high rhythm = small spread, low = large
-  const phaseSpread = (1 - s._rhythm) * 1.4;
+  const phaseSpread = (1 - s._rhythm) * 1.15;
 
   const t = performance.now() / 1000;
   const { x: comx, y: comy } = comXY(s.joints);
@@ -385,20 +402,20 @@ export function driveSkeleton(
     const ux = rx / rl, uy = ry / rl;
     const off = (JOINT_NAMES.indexOf(j.name) / JOINT_NAMES.length) * Math.PI * 2;
 
-    const breathe = (0.10 + amp * 0.45 + motionMag * 0.35) *
+    const breathe = (0.075 + amp * 0.34 + motionMag * 0.26) *
       Math.sin(s.phase + off + phaseOff);
     j.fx += ux * breathe;
     j.fy += uy * breathe;
 
     // spontaneous drift (inverse of conductance — distant joints have more autonomy)
-    const spontW = (1 - c) * 0.12 + 0.02;
+    const spontW = (1 - c) * 0.07 + 0.015;
     j.fx += Math.sin(t * j.driftFreq + j.driftPhase) * j.driftAmp * spontW;
     j.fy += Math.cos(t * j.driftFreq * 0.7 + j.driftPhase) * j.driftAmp * spontW;
 
     // torque from raw motion (perpendicular shear for organic twist)
-    if (rawLen > 0.008) {
+    if (rawLen > 0.022) {
       const px = -fdy, py = fdx;
-      const tw = (px * -uy + py * ux) * rawLen * (1.1 + motionMag * 0.9);
+      const tw = (px * -uy + py * ux) * rawLen * (0.82 + motionMag * 0.65);
       j.fx += -uy * tw * c;
       j.fy += ux * tw * c;
     }
@@ -407,7 +424,7 @@ export function driveSkeleton(
   spreadPressure(s);
   boneMinLength(s);
   adaptRest(s);
-  integrate(s, dt, 1 + motionMag * 0.8);
+  integrate(s, dt, 1 + motionMag * 0.55);
   solve(s, 6);
   lockCOM(s);
   rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);
@@ -419,19 +436,6 @@ const GAP = 7;
 const NR = 2.8;
 const ACTIVE_NR = 4;
 
-function gappedLine(
-  ctx: CanvasRenderingContext2D,
-  ax: number, ay: number, bx: number, by: number, gap: number,
-) {
-  let dx = bx - ax, dy = by - ay;
-  const len = Math.hypot(dx, dy) || 1e-8;
-  dx /= len; dy /= len;
-  const t = Math.max(0, len - 2 * gap);
-  if (t < 1) return;
-  ctx.moveTo(ax + dx * gap, ay + dy * gap);
-  ctx.lineTo(ax + dx * (gap + t), ay + dy * (gap + t));
-}
-
 export type DrawRole = "self" | "peer";
 
 export function drawSkeleton(
@@ -442,32 +446,22 @@ export function drawSkeleton(
 
   const sA = role === "self" ? opacity * 0.48 : opacity * 0.50;
   const fA = role === "self" ? opacity * 0.88 : opacity * 0.78;
-  const stroke = role === "self" ? `rgba(0,0,0,${sA})` : `rgba(178,178,182,${sA})`;
-  const fill = role === "self" ? `rgba(0,0,0,${fA})` : `rgba(188,188,192,${fA})`;
+  const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
+  const fillRgb = role === "self" ? RGB_SELF_FILL : RGB_PEER_FILL;
+  const lw = role === "self" ? 1.0 : 0.85;
 
-  // bones
-  ctx.beginPath();
   for (const b of s.bones) {
     if (!b.render) continue;
     const ja = s.joints[b.a], jb = s.joints[b.b];
-    gappedLine(ctx, ja.x, ja.y, jb.x, jb.y, GAP);
+    strokeGappedLineEndFade(ctx, ja.x, ja.y, jb.x, jb.y, GAP, lw, strokeRgb, sA);
   }
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = role === "self" ? 1.0 : 0.85;
-  ctx.lineCap = "round"; ctx.lineJoin = "round";
-  ctx.stroke();
 
-  // joints
   for (const j of Object.values(s.joints)) {
     const isActive = j.name === s.activeJoint;
     const r = isActive ? ACTIVE_NR : NR;
-    ctx.beginPath();
-    ctx.arc(j.x, j.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
+    fillDotRadialEndFade(ctx, j.x, j.y, r, fillRgb, fA, isActive ? 1.28 : 1.32);
   }
 
-  // subtle pulse ring on active joint
   const aj = s.joints[s.activeJoint];
   const pulse = 1.2 + 0.2 * Math.sin(s.phase * 1.5);
   ctx.beginPath();
@@ -544,12 +538,12 @@ export function drawSkeletonMergeEffects(
 
     const threadAlpha = strength * 0.30;
     if (threadAlpha > 0.01 && dist > GAP * 2) {
-      ctx.beginPath();
-      gappedLine(ctx, sj.x, sj.y, pj.x, pj.y, GAP);
-      ctx.strokeStyle = `rgba(100, 100, 105, ${threadAlpha})`;
-      ctx.lineWidth = 0.4 + strength * 0.6;
-      ctx.lineCap = "round";
-      ctx.stroke();
+      strokeGappedLineEndFade(
+        ctx, sj.x, sj.y, pj.x, pj.y, GAP,
+        0.4 + strength * 0.6,
+        RGB_THREAD,
+        threadAlpha,
+      );
     }
 
     const snapDist = 30;
@@ -559,10 +553,7 @@ export function drawSkeletonMergeEffects(
       const alpha = closeness * strength * 0.55;
       const r = NR * (1.3 + closeness * 1.0);
 
-      ctx.beginPath();
-      ctx.arc(mx, my, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(60, 60, 65, ${alpha})`;
-      ctx.fill();
+      fillDotRadialEndFade(ctx, mx, my, r, RGB_MERGE, alpha, 1.2);
 
       const pulse = 1.1 + 0.12 * Math.sin(time * 0.005);
       ctx.beginPath();

@@ -1,7 +1,13 @@
 /**
  * Generic trail renderer — captures named point snapshots and draws
- * fading skeletal echoes. Works for both simplex (4 points) and skeleton (13 joints).
+ * fading echoes. Lines: end-fade gradient; dots: radial ghost.
  */
+
+import {
+  fillDotRadialEndFade,
+  type Rgb,
+  strokeGappedLineEndFade,
+} from "./lineGradient";
 
 export interface TrailConfig {
   maxFrames: number;
@@ -11,6 +17,9 @@ export interface TrailConfig {
 }
 
 type PointSnapshot = Record<string, { x: number; y: number }>;
+
+const TRAIL_SELF: Rgb = [0, 0, 0];
+const TRAIL_PEER: Rgb = [200, 200, 204];
 
 export class TrailSystem {
   private history: PointSnapshot[] = [];
@@ -24,8 +33,8 @@ export class TrailSystem {
     this.cfg = {
       maxFrames: 40,
       captureInterval: 33,
-      fadeExponent: 2,
-      maxAlpha: 0.55,
+      fadeExponent: 2.2,
+      maxAlpha: 0.2,
       ...cfg,
     };
   }
@@ -65,27 +74,29 @@ export class TrailSystem {
     if (!this.enabled || this.history.length < 2) return;
 
     const total = this.history.length;
-    const baseColor = role === "self" ? "0,0,0" : "178,178,182";
+    const rgb = role === "self" ? TRAIL_SELF : TRAIL_PEER;
 
+    // Skip newest snapshot — live figure draws the current pose.
     for (let i = 0; i < total - 1; i++) {
       const snap = this.history[i];
       const age = (i + 1) / total;
-      const alpha = Math.pow(age, this.cfg.fadeExponent) * this.cfg.maxAlpha;
-      if (alpha < 0.005) continue;
+      const layerAlpha = Math.pow(age, this.cfg.fadeExponent) * this.cfg.maxAlpha;
+      if (layerAlpha < 0.003) continue;
 
-      const lw = 0.3 + age * 0.5;
+      const lw = 0.18 + age * 0.32;
 
-      ctx.beginPath();
       for (const [a, b] of bones) {
         const pa = snap[a], pb = snap[b];
         if (!pa || !pb) continue;
-        gappedLineTrail(ctx, pa.x, pa.y, pb.x, pb.y, gap);
+        strokeGappedLineEndFade(ctx, pa.x, pa.y, pb.x, pb.y, gap, lw, rgb, layerAlpha);
       }
-      ctx.strokeStyle = `rgba(${baseColor},${alpha})`;
-      ctx.lineWidth = lw;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.stroke();
+
+      const dotRBase = role === "self" ? 2.35 : 2.15;
+      for (const [key, pt] of Object.entries(snap)) {
+        const isActive = activeJoint !== undefined && key === activeJoint;
+        const coreR = isActive ? dotRBase * 1.35 : dotRBase;
+        fillDotRadialEndFade(ctx, pt.x, pt.y, coreR, rgb, layerAlpha * 0.92, 1.45);
+      }
     }
   }
 
@@ -93,17 +104,4 @@ export class TrailSystem {
     this.history = [];
     this.idleTime = 0;
   }
-}
-
-function gappedLineTrail(
-  ctx: CanvasRenderingContext2D,
-  ax: number, ay: number, bx: number, by: number, gap: number,
-) {
-  let dx = bx - ax, dy = by - ay;
-  const len = Math.hypot(dx, dy) || 1e-8;
-  dx /= len; dy /= len;
-  const t = Math.max(0, len - 2 * gap);
-  if (t < 1) return;
-  ctx.moveTo(ax + dx * gap, ay + dy * gap);
-  ctx.lineTo(ax + dx * (gap + t), ay + dy * (gap + t));
 }

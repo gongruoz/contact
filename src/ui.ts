@@ -136,20 +136,27 @@ export function hideUI() {
   btnExit.classList.add("hidden");
 }
 
-// ---- Mode indicator ----
+// ---- Figure toolbar (shape / body / trail) ----
 
-const modeIndicator = document.getElementById("mode-indicator")!;
-let modeIndicatorTimer = 0;
+const btnModeShape = document.getElementById("btn-mode-shape") as HTMLButtonElement;
+const btnModeBody = document.getElementById("btn-mode-body") as HTMLButtonElement;
+const btnTrail = document.getElementById("btn-trail") as HTMLButtonElement;
 
-export function showModeIndicator(mode: string, trails: boolean) {
-  const modeLabel = mode === "simplex" ? "shape" : "body";
-  const trailLabel = trails ? "on" : "off";
-  modeIndicator.textContent = `1: shape · 2: body · t: trail\n${modeLabel} · trail ${trailLabel}`;
-  modeIndicator.style.opacity = "0.45";
-  modeIndicator.classList.remove("hidden");
+export type FigureToolbarMode = "simplex" | "skeleton";
 
-  clearTimeout(modeIndicatorTimer);
-  modeIndicatorTimer = window.setTimeout(() => {
-    modeIndicator.style.opacity = "0";
-  }, 3000);
+export function syncFigureToolbar(mode: FigureToolbarMode, trailOn: boolean) {
+  btnModeShape.classList.toggle("figure-toolbar__btn--active", mode === "simplex");
+  btnModeBody.classList.toggle("figure-toolbar__btn--active", mode === "skeleton");
+  btnTrail.classList.toggle("figure-toolbar__btn--active", trailOn);
+  btnTrail.textContent = trailOn ? "trail on" : "trail off";
+}
+
+export function initFigureToolbar(handlers: {
+  onShape: () => void;
+  onBody: () => void;
+  onTrail: () => void;
+}) {
+  btnModeShape.addEventListener("click", handlers.onShape);
+  btnModeBody.addEventListener("click", handlers.onBody);
+  btnTrail.addEventListener("click", handlers.onTrail);
 }

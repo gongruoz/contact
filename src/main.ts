@@ -8,7 +8,7 @@ import {
 import {
   setHint, showRoomCode, showConnected, showDisconnected,
   onCreateRoom, onJoinRoom, onExitRoom, setStatus, setPeerError,
-  showModeIndicator,
+  initFigureToolbar, syncFigureToolbar,
 } from "./ui";
 import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
 import {
@@ -390,28 +390,36 @@ async function init() {
     destroyPeer();
   });
 
-  window.addEventListener("keydown", (e) => {
-    if (e.target instanceof HTMLInputElement) return;
-    if (e.key === "1" && mode !== "simplex") {
-      mode = "simplex";
-      selfTrail.clear();
-      peerTrail.clear();
-      showModeIndicator(mode, selfTrail.enabled);
-    } else if (e.key === "2" && mode !== "skeleton") {
-      mode = "skeleton";
-      selfTrail.clear();
-      peerTrail.clear();
-      showModeIndicator(mode, selfTrail.enabled);
-    } else if (e.key === "t" || e.key === "T") {
-      const on = !selfTrail.enabled;
-      selfTrail.enabled = on;
-      peerTrail.enabled = on;
-      if (!on) { selfTrail.clear(); peerTrail.clear(); }
-      showModeIndicator(mode, on);
-    }
+  function applyMode(next: FigureMode) {
+    if (mode === next) return;
+    mode = next;
+    selfTrail.clear();
+    peerTrail.clear();
+    syncFigureToolbar(mode, selfTrail.enabled);
+  }
+
+  function applyTrailToggle() {
+    const on = !selfTrail.enabled;
+    selfTrail.enabled = on;
+    peerTrail.enabled = on;
+    if (!on) { selfTrail.clear(); peerTrail.clear(); }
+    syncFigureToolbar(mode, on);
+  }
+
+  initFigureToolbar({
+    onShape: () => applyMode("simplex"),
+    onBody: () => applyMode("skeleton"),
+    onTrail: applyTrailToggle,
   });
 
-  showModeIndicator(mode, selfTrail.enabled);
+  window.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement) return;
+    if (e.key === "1") applyMode("simplex");
+    else if (e.key === "2") applyMode("skeleton");
+    else if (e.key === "t" || e.key === "T") applyTrailToggle();
+  });
+
+  syncFigureToolbar(mode, selfTrail.enabled);
   requestAnimationFrame(loop);
 }
 

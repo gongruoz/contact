@@ -1,4 +1,14 @@
 import type { Features } from "./dsp";
+import {
+  fillDotRadialEndFade,
+  RGB_PEER_FILL,
+  RGB_PEER_STROKE,
+  RGB_SELF_FILL,
+  RGB_SELF_STROKE,
+  RGB_MERGE,
+  RGB_THREAD,
+  strokeGappedLineEndFade,
+} from "./lineGradient";
 
 // ---- Verlet particle simulation (Euclidean) ----
 
@@ -109,8 +119,10 @@ function rotateAroundAnchor(s: Simplex, ax: number, ay: number, dTheta: number) 
   }
 }
 
-const DAMP = 0.955;
-const ACC = 4200;
+const DAMP = 0.963;
+const ACC = 3600;
+const RAW_SMOOTH = 0.055;
+const RAW_DEAD = 0.014;
 
 function integrate(s: Simplex, dt: number, impulseMul = 1) {
   const a = dt * dt * ACC * impulseMul;
@@ -187,41 +199,46 @@ export function driveSimplex(
   rawAx: number, rawAy: number,
   dt: number,
 ) {
-  const lr = 0.065;
+  s.smRawX += RAW_SMOOTH * (rawAx - s.smRawX);
+  s.smRawY += RAW_SMOOTH * (rawAy - s.smRawY);
+  let ax = s.smRawX, ay = s.smRawY;
+  if (Math.hypot(ax, ay) < RAW_DEAD) ax = 0, ay = 0;
+
+  const lr = 0.038;
   s._amp += (f.amplitude - s._amp) * lr;
   s._freq += (f.frequency - s._freq) * lr;
   s._axis += (f.axis - s._axis) * lr;
   s._smooth += (f.smoothness - s._smooth) * lr;
 
-  const spd = 0.35 + s._freq * 3.0;
+  const spd = 0.22 + s._freq * 2.0;
   s.phase += spd * dt;
 
-  const rawLenEarly = Math.hypot(rawAx, rawAy);
+  const rawLenEarly = Math.hypot(ax, ay);
   const amp = s._amp;
-  const motionMag = Math.min(1, rawLenEarly * 1.2);
-  const express = Math.max(0.35, Math.min(1.45, 0.38 + amp * 0.42 + motionMag * 0.55));
+  const motionMag = Math.min(1, rawLenEarly * 1.05);
+  const express = Math.max(0.32, Math.min(1.35, 0.36 + amp * 0.38 + motionMag * 0.48));
 
-  const edgeScale = 1 - 0.22 * motionMag;
-  const diagScale = 1 - 0.18 * motionMag;
-  const eStiff = Math.max(0.028, (0.055 + s._smooth * 0.09) * edgeScale);
-  const dStiff = Math.max(0.012, (0.018 + s._smooth * 0.036) * diagScale);
+  const edgeScale = 1 - 0.18 * motionMag;
+  const diagScale = 1 - 0.15 * motionMag;
+  const eStiff = Math.max(0.032, (0.058 + s._smooth * 0.095) * edgeScale);
+  const dStiff = Math.max(0.014, (0.02 + s._smooth * 0.038) * diagScale);
   for (const c of s.constraints) c.stiffness = c.isDiag ? dStiff : eStiff;
 
-  const maxLean = 82 * express;
-  const leanTx = rawAx * maxLean;
-  const leanTy = rawAy * maxLean;
-  const leanK = 0.155;
+  const maxLean = 72 * express;
+  const leanTx = ax * maxLean;
+  const leanTy = ay * maxLean;
+  const leanK = 0.088;
   s.leanX += (leanTx - s.leanX) * leanK;
   s.leanY += (leanTy - s.leanY) * leanK;
 
   let tiltTarget = 0;
-  if (rawLenEarly > 0.02) {
-    tiltTarget = Math.atan2(rawAy, rawAx) * 0.5;
-    const lim = 0.88;
+  if (rawLenEarly > 0.035) {
+    tiltTarget = Math.atan2(ay, ax) * 0.42;
+    const lim = 0.72;
     tiltTarget = Math.max(-lim, Math.min(lim, tiltTarget));
   }
   const prevTilt = s.tiltSmoothed;
-  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.14;
+  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.078;
   const dTilt = s.tiltSmoothed - prevTilt;
 
   const { x: cx, y: cy } = comXY(s.particles);
@@ -234,42 +251,42 @@ export function driveSimplex(
     const ux = rx / rl, uy = ry / rl;
     const off = (i / N) * Math.PI * 2;
 
-    const b1 = (0.10 + amp * 0.48 + motionMag * 0.38) * Math.sin(s.phase + off);
-    const b2 = (0.028 + amp * 0.18 + motionMag * 0.12) * Math.sin(s.phase * 1.618 + off * 0.7 + 0.4);
+    const b1 = (0.075 + amp * 0.38 + motionMag * 0.3) * Math.sin(s.phase + off);
+    const b2 = (0.022 + amp * 0.14 + motionMag * 0.09) * Math.sin(s.phase * 1.618 + off * 0.7 + 0.4);
     p.fx += ux * (b1 + b2);
     p.fy += uy * (b1 + b2);
 
     const dot = ux * Math.cos(dir) + uy * Math.sin(dir);
-    const stretch = dot * (amp * 0.26 + motionMag * 0.14) * Math.sin(s.phase * 0.75 + 0.6);
+    const stretch = dot * (amp * 0.2 + motionMag * 0.11) * Math.sin(s.phase * 0.75 + 0.6);
     p.fx += ux * stretch;
     p.fy += uy * stretch;
 
-    const w1 = 0.035 * Math.sin(s.phase * 0.11 + i * 1.3);
-    const w2 = 0.02 * Math.cos(s.phase * 0.073 + i * 2.2);
+    const w1 = 0.028 * Math.sin(s.phase * 0.09 + i * 1.3);
+    const w2 = 0.016 * Math.cos(s.phase * 0.06 + i * 2.2);
     p.fx += -uy * w1 + ux * w2;
     p.fy += ux * w1 + uy * w2;
   }
 
   const rawLen = rawLenEarly;
-  if (rawLen > 0.008) {
+  if (rawLen > 0.02) {
     const inv = 1 / rawLen;
-    const tx = -rawAy * inv, ty = rawAx * inv;
-    const mx = rawAx * inv, my = rawAy * inv;
+    const tx = -ay * inv, ty = ax * inv;
+    const mx = ax * inv, my = ay * inv;
     const px = -my, py = mx;
     for (let i = 0; i < N; i++) {
       const p = s.particles[i];
       const rx = p.x - cx, ry = p.y - cy;
       const rl = Math.hypot(rx, ry) || 1e-8;
       const ux = rx / rl, uy = ry / rl;
-      const tw = (tx * -uy + ty * ux) * rawLen * (1.35 + motionMag * 1.1);
+      const tw = (tx * -uy + ty * ux) * rawLen * (1.05 + motionMag * 0.85);
       p.fx += -uy * tw;
       p.fy += ux * tw;
       const align = Math.max(0, ux * mx + uy * my);
-      const reach = align * rawLen * (0.32 + amp * 0.65) * express;
+      const reach = align * rawLen * (0.26 + amp * 0.52) * express;
       p.fx += mx * reach;
       p.fy += my * reach;
       const side = ux * px + uy * py;
-      const squash = side * rawLen * 0.62 * express;
+      const squash = side * rawLen * 0.5 * express;
       p.fx += px * squash;
       p.fy += py * squash;
     }
@@ -278,7 +295,7 @@ export function driveSimplex(
   spreadPressure(s);
   edgeMinLength(s);
   adaptRest(s);
-  integrate(s, dt, 1 + motionMag * 0.9);
+  integrate(s, dt, 1 + motionMag * 0.65);
   solve(s, 5);
   lockCOM(s);
   rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);
@@ -288,19 +305,6 @@ export function driveSimplex(
 
 const GAP = 6;
 const NR = 4;
-
-function gappedLine(
-  ctx: CanvasRenderingContext2D,
-  ax: number, ay: number, bx: number, by: number, gap: number,
-) {
-  let dx = bx - ax, dy = by - ay;
-  const len = Math.hypot(dx, dy) || 1e-8;
-  dx /= len; dy /= len;
-  const t = Math.max(0, len - 2 * gap);
-  if (t < 1) return;
-  ctx.moveTo(ax + dx * gap, ay + dy * gap);
-  ctx.lineTo(ax + dx * (gap + t), ay + dy * (gap + t));
-}
 
 export type DrawRole = "self" | "peer";
 
@@ -312,25 +316,18 @@ export function drawSimplex(
 
   const sA = role === "self" ? opacity * 0.52 : opacity * 0.55;
   const fA = role === "self" ? opacity * 0.92 : opacity * 0.82;
-  const stroke = role === "self" ? `rgba(0,0,0,${sA})` : `rgba(178,178,182,${sA})`;
-  const fill = role === "self" ? `rgba(0,0,0,${fA})` : `rgba(188,188,192,${fA})`;
+  const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
+  const fillRgb = role === "self" ? RGB_SELF_FILL : RGB_PEER_FILL;
+  const lw = role === "self" ? 1.35 : 1.15;
 
-  ctx.beginPath();
   for (const c of s.constraints) {
     if (c.isDiag) continue;
     const pa = s.particles[c.a], pb = s.particles[c.b];
-    gappedLine(ctx, pa.x, pa.y, pb.x, pb.y, GAP);
+    strokeGappedLineEndFade(ctx, pa.x, pa.y, pb.x, pb.y, GAP, lw, strokeRgb, sA);
   }
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = role === "self" ? 1.35 : 1.15;
-  ctx.lineCap = "round"; ctx.lineJoin = "round";
-  ctx.stroke();
 
   for (const p of s.particles) {
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, NR, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
+    fillDotRadialEndFade(ctx, p.x, p.y, NR, fillRgb, fA);
   }
 }
 
@@ -411,12 +408,12 @@ export function drawMergeEffects(
 
     const threadAlpha = strength * 0.35;
     if (threadAlpha > 0.01 && dist > GAP * 2) {
-      ctx.beginPath();
-      gappedLine(ctx, sp.x, sp.y, pp.x, pp.y, GAP);
-      ctx.strokeStyle = `rgba(100, 100, 105, ${threadAlpha})`;
-      ctx.lineWidth = 0.5 + strength * 0.8;
-      ctx.lineCap = "round";
-      ctx.stroke();
+      strokeGappedLineEndFade(
+        ctx, sp.x, sp.y, pp.x, pp.y, GAP,
+        0.5 + strength * 0.8,
+        RGB_THREAD,
+        threadAlpha,
+      );
     }
 
     const snapDist = 35;
@@ -426,10 +423,7 @@ export function drawMergeEffects(
       const alpha = closeness * strength * 0.65;
       const r = NR * (1.4 + closeness * 1.2);
 
-      ctx.beginPath();
-      ctx.arc(mx, my, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(60, 60, 65, ${alpha})`;
-      ctx.fill();
+      fillDotRadialEndFade(ctx, mx, my, r, RGB_MERGE, alpha, 1.2);
 
       const pulse = 1.15 + 0.15 * Math.sin(time * 0.005);
       ctx.beginPath();

@@ -1,0 +1,90 @@
+/**
+ * Line strokes: transparent at both ends, solid in the middle (linear along segment).
+ * Dots: radial — center opaque, edge transparent.
+ */
+
+export type Rgb = readonly [number, number, number];
+
+export const RGB_SELF_STROKE: Rgb = [0, 0, 0];
+export const RGB_SELF_FILL: Rgb = [0, 0, 0];
+export const RGB_PEER_STROKE: Rgb = [178, 178, 182];
+export const RGB_PEER_FILL: Rgb = [188, 188, 192];
+export const RGB_THREAD: Rgb = [100, 100, 105];
+export const RGB_MERGE: Rgb = [60, 60, 65];
+
+/** Visible segment after gapping from joint dots. */
+export function gappedSegmentEndpoints(
+  ax: number, ay: number, bx: number, by: number, gap: number,
+): { x1: number; y1: number; x2: number; y2: number } | null {
+  let dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy) || 1e-8;
+  dx /= len; dy /= len;
+  const t = Math.max(0, len - 2 * gap);
+  if (t < 1) return null;
+  return {
+    x1: ax + dx * gap,
+    y1: ay + dy * gap,
+    x2: ax + dx * (gap + t),
+    y2: ay + dy * (gap + t),
+  };
+}
+
+/** Stroke one segment: ends fade to transparent, peak alpha at center. */
+export function strokeLineEndFade(
+  ctx: CanvasRenderingContext2D,
+  x1: number, y1: number, x2: number, y2: number,
+  lineWidth: number,
+  rgb: Rgb,
+  centerAlpha: number,
+) {
+  if (centerAlpha < 0.003) return;
+  const [r, g, b] = rgb;
+  const lg = ctx.createLinearGradient(x1, y1, x2, y2);
+  lg.addColorStop(0, `rgba(${r},${g},${b},0)`);
+  lg.addColorStop(0.5, `rgba(${r},${g},${b},${centerAlpha})`);
+  lg.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.strokeStyle = lg;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.stroke();
+}
+
+export function strokeGappedLineEndFade(
+  ctx: CanvasRenderingContext2D,
+  ax: number, ay: number, bx: number, by: number,
+  gap: number,
+  lineWidth: number,
+  rgb: Rgb,
+  centerAlpha: number,
+) {
+  const seg = gappedSegmentEndpoints(ax, ay, bx, by, gap);
+  if (!seg) return;
+  strokeLineEndFade(ctx, seg.x1, seg.y1, seg.x2, seg.y2, lineWidth, rgb, centerAlpha);
+}
+
+/** Filled disc: strong center, soft falloff to transparent at outer radius. */
+export function fillDotRadialEndFade(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number,
+  coreRadius: number,
+  rgb: Rgb,
+  centerAlpha: number,
+  outerScale = 1.35,
+) {
+  if (centerAlpha < 0.003) return;
+  const outer = coreRadius * outerScale;
+  const [r, g, b] = rgb;
+  const rad = ctx.createRadialGradient(cx, cy, 0, cx, cy, outer);
+  rad.addColorStop(0, `rgba(${r},${g},${b},${centerAlpha})`);
+  rad.addColorStop(0.42, `rgba(${r},${g},${b},${centerAlpha * 0.92})`);
+  rad.addColorStop(0.78, `rgba(${r},${g},${b},${centerAlpha * 0.35})`);
+  rad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.beginPath();
+  ctx.arc(cx, cy, outer, 0, Math.PI * 2);
+  ctx.fillStyle = rad;
+  ctx.fill();
+}

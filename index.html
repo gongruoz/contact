@@ -180,20 +180,50 @@
     }
     .hidden { display: none !important; }
 
-    #mode-indicator {
+    #figure-toolbar {
       position: fixed;
       top: max(1.1rem, env(safe-area-inset-top, 0px));
-      right: 1rem;
-      font-size: 0.82em;
+      right: max(0.75rem, env(safe-area-inset-right, 0px));
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.35rem;
+      max-width: min(96vw, 20rem);
+    }
+    #figure-toolbar .figure-toolbar__seg {
+      display: inline-flex;
+      border: 1px solid rgba(0,0,0,0.2);
+      background: #fff;
+    }
+    #figure-toolbar .figure-toolbar__btn {
+      appearance: none;
+      -webkit-appearance: none;
+      font-family: inherit;
       font-weight: 300;
+      font-size: 0.82em;
       letter-spacing: inherit;
-      opacity: 0;
-      text-align: right;
-      line-height: 1.55;
-      white-space: pre;
-      color: #888;
-      transition: opacity 1.2s ease-out;
-      pointer-events: none;
+      padding: 0.38rem 0.55rem;
+      border: none;
+      background: #fff;
+      color: #666;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    #figure-toolbar .figure-toolbar__btn:hover {
+      background: #fafafa;
+      color: #333;
+    }
+    #figure-toolbar .figure-toolbar__btn--active {
+      background: rgba(0,0,0,0.06);
+      color: #222;
+    }
+    #figure-toolbar .figure-toolbar__btn + .figure-toolbar__btn {
+      border-left: 1px solid rgba(0,0,0,0.14);
+    }
+    #figure-toolbar #btn-trail.figure-toolbar__btn {
+      border: 1px solid rgba(0,0,0,0.2);
+      min-width: 4.6rem;
     }
   </style>
 </head>
@@ -201,7 +231,13 @@
   <canvas id="gl"></canvas>
   <div id="ui">
     <div id="hint" class="interactive">move your mouse — make it dance</div>
-    <div id="mode-indicator" class="hidden"></div>
+    <div id="figure-toolbar" class="interactive">
+      <div class="figure-toolbar__seg" role="group" aria-label="figure">
+        <button type="button" id="btn-mode-shape" class="figure-toolbar__btn figure-toolbar__btn--active">shape</button>
+        <button type="button" id="btn-mode-body" class="figure-toolbar__btn">body</button>
+      </div>
+      <button type="button" id="btn-trail" class="figure-toolbar__btn">trail off</button>
+    </div>
     <div id="connect-area" class="interactive">
       <div id="tagline"><span class="tagline-line1">show how you move · feel how they move</span><span class="tagline-line2">sync up to make contact</span></div>
       <div id="connect-controls">

@@ -92,7 +92,7 @@ const FREQ_MAX = 12;
 /** jerk on tanh-normalized magnitude (same units mouse vs phone) */
 const JERK_MAX = 0.35;
 /** EMA on extracted features (reduces feature flicker from noisy buffers) */
-const FEATURE_EMA = 0.16;
+const FEATURE_EMA = 0.09;
 
 const SPEED_WINDOW = 8;
 const SPEED_MAG_MAX = 0.6;
