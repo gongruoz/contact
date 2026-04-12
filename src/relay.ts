@@ -1,7 +1,7 @@
 /**
  * WebSocket relay transport (Render/Railway/etc.) — replaces PeerJS/WebRTC.
  * Protocol: server sends {"type":"peer"} when 2nd client joins; {"type":"peer-left"} when partner drops.
- * App payloads: JSON array of 16 numbers — 4 vertices × (nx, ny, nvx, nvy) viewport-centered normalized.
+ * App payloads: JSON array of numbers (same shape as former tinypeer send).
  */
 
 let ws: WebSocket | null = null;
@@ -101,7 +101,7 @@ function attachSocketHandlers(socket: WebSocket) {
         }
         return;
       }
-      if (Array.isArray(parsed) && parsed.length >= 16) {
+      if (Array.isArray(parsed) && parsed.length >= 4) {
         const nums = parsed.map((x) => Number(x));
         if (nums.every((n) => !Number.isNaN(n))) onData?.(nums);
       }

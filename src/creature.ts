@@ -284,65 +284,6 @@ export function driveSimplex(
   rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);
 }
 
-/**
- * Serialize simplex for the wire: positions and velocities relative to **viewport center**,
- * normalized by min(w, h). Receiver re-anchors using their peer slot (peerCx, peerCy).
- */
-export function serializeSimplexNormalized(s: Simplex, w: number, h: number, dt: number): Float32Array {
-  const scale = Math.min(w, h);
-  const invS = scale > 1e-8 ? 1 / scale : 1;
-  const invDt = dt > 1e-7 ? 1 / dt : 60;
-  const ccx = w * 0.5;
-  const ccy = h * 0.5;
-  const out = new Float32Array(16);
-  for (let i = 0; i < N; i++) {
-    const p = s.particles[i];
-    const o = i * 4;
-    out[o] = (p.x - ccx) * invS;
-    out[o + 1] = (p.y - ccy) * invS;
-    out[o + 2] = ((p.x - p.px) * invDt) * invS;
-    out[o + 3] = ((p.y - p.py) * invDt) * invS;
-  }
-  return out;
-}
-
-/**
- * Apply remote dots: nx,ny are offsets from **their** viewport center in scale units;
- * we place at peerCx + nx * scale so the same packet matches left/right layout slots.
- */
-export function applyPeerDotsNormalized(
-  s: Simplex,
-  flat: ArrayLike<number> & { length: number },
-  peerCx: number,
-  peerCy: number,
-  w: number,
-  h: number,
-  dt: number,
-  snap: boolean,
-) {
-  const scale = Math.min(w, h);
-  const alpha = snap ? 1 : 0.48;
-  for (let i = 0; i < N; i++) {
-    const o = i * 4;
-    const nx = Number(flat[o]);
-    const ny = Number(flat[o + 1]);
-    const nvx = Number(flat[o + 2]);
-    const nvy = Number(flat[o + 3]);
-    if (![nx, ny, nvx, nvy].every((v) => Number.isFinite(v))) return;
-    const tx = peerCx + nx * scale;
-    const ty = peerCy + ny * scale;
-    const p = s.particles[i];
-    p.x += alpha * (tx - p.x);
-    p.y += alpha * (ty - p.y);
-    const pvx = nvx * scale;
-    const pvy = nvy * scale;
-    p.px = p.x - pvx * dt;
-    p.py = p.y - pvy * dt;
-    p.fx = 0;
-    p.fy = 0;
-  }
-}
-
 // ---- Rendering ----
 
 const GAP = 6;
@@ -455,29 +396,6 @@ export function applyFusion(
   solve(peer, 3);
   lockCOM(self);
   lockCOM(peer);
-}
-
-/** Peer carries network-authoritative positions; only self is integrated toward them. */
-export function applyFusionSelfOnly(
-  self: Simplex, peer: Simplex,
-  pairs: MergePair[], dt: number,
-) {
-  if (pairs.length === 0) return;
-
-  for (const { si, pi, strength } of pairs) {
-    if (strength < 0.01) continue;
-    const sp = self.particles[si], pp = peer.particles[pi];
-    const dx = pp.x - sp.x, dy = pp.y - sp.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const nx = dx / dist, ny = dy / dist;
-    const f = strength * 0.12;
-    sp.fx += nx * f;
-    sp.fy += ny * f;
-  }
-
-  integrate(self, dt);
-  solve(self, 3);
-  lockCOM(self);
 }
 
 export function drawMergeEffects(
