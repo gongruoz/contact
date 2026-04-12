@@ -4,9 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "patch-package && tsc && vite build",
-    "preview": "vite preview",
-    "postinstall": "patch-package"
+    "build": "tsc && vite build",
+    "preview": "vite preview"
   },
   "keywords": [],
   "author": "",
@@ -17,8 +16,5 @@
     "typescript": "^6.0.2",
     "vite": "^8.0.3"
   },
-  "dependencies": {
-    "patch-package": "^8.0.1",
-    "tinypeer": "^0.2.0"
-  }
+  "dependencies": {}
 }

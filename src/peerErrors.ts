@@ -2,6 +2,38 @@ export function describePeerError(error: unknown): { label: string; detail: stri
   const detail = error instanceof Error ? error.message : String(error);
   const m = detail.toLowerCase();
 
+  if (m.includes("missing vite_relay_url") || m.includes("vite_relay_url")) {
+    return {
+      label: "relay URL not configured",
+      detail:
+        detail +
+        " · Set `VITE_RELAY_URL` in `.env.local` (dev) or Vercel env to your Render WebSocket base, e.g. `wss://contact-relay.onrender.com` — then rebuild / redeploy.",
+    };
+  }
+  if (m.includes("room full")) {
+    return {
+      label: "room is full",
+      detail:
+        detail +
+        " · Only two clients per room. Ask for a fresh room code or try again.",
+    };
+  }
+  if (m.includes("timeout waiting for partner")) {
+    return {
+      label: "no one in that room",
+      detail:
+        detail +
+        " · Create the room on the other device first, or check the code.",
+    };
+  }
+  if (m.includes("websocket connection failed") || m.includes("websocket open timeout")) {
+    return {
+      label: "can’t reach relay server",
+      detail:
+        detail +
+        " · Check `VITE_RELAY_URL` (must be `wss://` when the page is HTTPS). On Render free tier the first request after sleep can take ~1 minute.",
+    };
+  }
   if (m.includes("connection timeout")) {
     return {
       label:

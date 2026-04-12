@@ -4,8 +4,7 @@ import { computeSimilarity, resetSimilarity } from "./similarity";
 import {
   createRoom, joinRoom, sendFeatures, burstSendFeatures,
   onPeerData, onPeerConnected, onPeerDisconnected,
-  agentPeerDebug,
-} from "./peer";
+} from "./relay";
 import { setHint, showRoomCode, showConnected, showDisconnected, onCreateRoom, onJoinRoom, setStatus, setPeerError, fadeOutHint } from "./ui";
 import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
 import {
@@ -206,14 +205,6 @@ function warnBadDevOrigin(): void {
   if (typeof location === "undefined") return;
   const h = location.hostname;
   if (/^198\.18\./.test(h)) {
-    // #region agent log
-    agentPeerDebug(
-      "main.ts:warnBadDevOrigin",
-      "hostname is 198.18.x (VPN/tunnel range — not real LAN)",
-      { hostname: h },
-      "G",
-    );
-    // #endregion
     setPeerError(
       "wrong address for phone pairing",
       "198.18.x.x is usually a VPN/proxy virtual IP (e.g. Clash/Surge), not your Wi‑Fi. On Mac and iPhone open only the https://192.168… line from the terminal. Turn VPN off on the Mac while testing if unsure.",
@@ -222,9 +213,6 @@ function warnBadDevOrigin(): void {
     return;
   }
   if (isMobile() && (h === "localhost" || h === "127.0.0.1")) {
-    // #region agent log
-    agentPeerDebug("main.ts:warnBadDevOrigin", "phone using localhost origin", { hostname: h }, "G");
-    // #endregion
     setPeerError(
       "wrong address on phone",
       "localhost on the phone is the phone itself, not your Mac. Use the https://192.168… Network URL from npm run dev.",

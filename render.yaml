@@ -1,0 +1,10 @@
+# Render Blueprint: deploy the WebSocket relay as a separate Web Service.
+# In Render Dashboard → New → Blueprint → connect repo, or create Web Service manually (see README steps).
+services:
+  - type: web
+    name: contact-relay
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
