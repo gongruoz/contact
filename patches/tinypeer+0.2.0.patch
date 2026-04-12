@@ -1,0 +1,162 @@
+diff --git a/node_modules/tinypeer/dist/peer-core.js b/node_modules/tinypeer/dist/peer-core.js
+index d877fe3..ee728c7 100644
+--- a/node_modules/tinypeer/dist/peer-core.js
++++ b/node_modules/tinypeer/dist/peer-core.js
+@@ -90,6 +90,64 @@ export async function createPeerCore(options, router = {}) {
+             }
+         }
+     });
++    /** When URL has ?debug — log ICE/connection transitions and periodic getStats (contact app). */
++    function contactIceDebugInstall(pc, roleTag) {
++        try {
++            const loc = typeof globalThis !== 'undefined' && globalThis.location;
++            if (!loc || !new URLSearchParams(loc.search || '').has('debug'))
++                return;
++            const snap = () => {
++                // console.log (not .debug): Chrome hides "Verbose" by default so users never saw logs.
++                console.log('[contact-ice]', roleTag, {
++                    iceConnectionState: pc.iceConnectionState,
++                    connectionState: pc.connectionState,
++                    iceGatheringState: pc.iceGatheringState,
++                    signalingState: pc.signalingState,
++                });
++            };
++            pc.addEventListener('iceconnectionstatechange', snap);
++            pc.addEventListener('connectionstatechange', snap);
++            pc.addEventListener('icegatheringstatechange', snap);
++            snap();
++            let ticks = 0;
++            const id = globalThis.setInterval(async () => {
++                ticks++;
++                if (ticks > 30 ||
++                    pc.connectionState === 'connected' ||
++                    pc.connectionState === 'failed' ||
++                    pc.connectionState === 'closed') {
++                    globalThis.clearInterval(id);
++                    return;
++                }
++                try {
++                    const report = await pc.getStats();
++                    const rows = [];
++                    report.forEach((rep) => {
++                        if (rep.type === 'local-candidate' ||
++                            rep.type === 'remote-candidate' ||
++                            rep.type === 'candidate-pair') {
++                            rows.push({
++                                type: rep.type,
++                                state: rep.state,
++                                nominated: rep.nominated,
++                                protocol: rep.protocol,
++                                candidateType: rep.candidateType,
++                                address: rep.address ?? rep.ip,
++                                port: rep.port,
++                            });
++                        }
++                    });
++                    console.log('[contact-ice-stats]', roleTag, pc.connectionState, rows.slice(0, 24));
++                }
++                catch (e) {
++                    console.log('[contact-ice-stats]', roleTag, e);
++                }
++            }, 1000);
++        }
++        catch {
++            /* ignore */
++        }
++    }
+     function makePeerConnection(initiator, connectionId) {
+         const pc = new RTCPeerConnection({
+             iceServers: DEFAULT_ICE_SERVERS,
+@@ -103,8 +161,7 @@ export async function createPeerCore(options, router = {}) {
+         };
+         pc.oniceconnectionstatechange = () => {
+             if (pc.iceConnectionState === 'failed' ||
+-                pc.iceConnectionState === 'closed' ||
+-                pc.iceConnectionState === 'disconnected') {
++                pc.iceConnectionState === 'closed') {
+                 connections.delete(connectionId);
+                 signalRouter.unregister(connectionId);
+             }
+@@ -134,6 +191,7 @@ export async function createPeerCore(options, router = {}) {
+         const connectionId = generateConnectionId();
+         const pc = makePeerConnection(true, connectionId);
+         signalRouter.register(connectionId, pc);
++        contactIceDebugInstall(pc, 'joiner');
+         return new Promise((resolve, reject) => {
+             const timeout = setTimeout(() => {
+                 pendingConnections.delete(connectionId);
+@@ -189,6 +247,23 @@ export async function createPeerCore(options, router = {}) {
+                     });
+                 }
+             };
++            pc.oniceconnectionstatechange = () => {
++                // Do not treat `disconnected` as fatal — common transient state on mobile; may recover to `connected`.
++                const ice = pc.iceConnectionState;
++                if (ice === 'failed' || ice === 'closed') {
++                    const pending = pendingConnections.get(connectionId);
++                    if (pending) {
++                        clearTimeout(timeout);
++                        // Fixed strings: avoid any engine quirk where `pc.iceConnectionState` reads differently
++                        // than the branch that fired (and never report `disconnected` from this path).
++                        pending.reject(new Error(ice === 'failed' ? 'ICE: failed' : 'ICE: closed'));
++                        pendingConnections.delete(connectionId);
++                    }
++                    connections.delete(connectionId);
++                    signalRouter.unregister(connectionId);
++                    pc.close();
++                }
++            };
+             channel.onopen = () => {
+                 const { connection, promise } = createConnection(peerId, channel, options?.metadata, codec);
+                 promise
+@@ -213,12 +288,17 @@ export async function createPeerCore(options, router = {}) {
+                 });
+             };
+             pc.onconnectionstatechange = () => {
+-                if (pc.connectionState === 'failed' ||
+-                    pc.connectionState === 'closed') {
+-                    clearTimeout(timeout);
+-                    pendingConnections.delete(connectionId);
++                const cs = pc.connectionState;
++                if (cs === 'failed' || cs === 'closed') {
++                    const pending = pendingConnections.get(connectionId);
++                    if (pending) {
++                        clearTimeout(timeout);
++                        pending.reject(new Error(cs === 'failed' ? 'WebRTC: failed' : 'WebRTC: closed'));
++                        pendingConnections.delete(connectionId);
++                    }
+                     connections.delete(connectionId);
+                     signalRouter.unregister(connectionId);
++                    pc.close();
+                 }
+             };
+         });
+@@ -230,6 +310,7 @@ export async function createPeerCore(options, router = {}) {
+         const { connectionId, sdp, metadata } = payload;
+         const pc = makePeerConnection(false, connectionId);
+         signalRouter.register(connectionId, pc);
++        contactIceDebugInstall(pc, 'host');
+         pc.ondatachannel = event => {
+             const channel = event.channel;
+             channel.binaryType = 'arraybuffer';
+diff --git a/node_modules/tinypeer/dist/signal-router.js b/node_modules/tinypeer/dist/signal-router.js
+index f15e49e..35719b1 100644
+--- a/node_modules/tinypeer/dist/signal-router.js
++++ b/node_modules/tinypeer/dist/signal-router.js
+@@ -13,10 +13,14 @@ export function createSignalRouter() {
+             if (!pc)
+                 return;
+             if (message.type === 'ANSWER') {
+-                pc.setRemoteDescription(message.payload.sdp).catch(() => { });
++                pc.setRemoteDescription(message.payload.sdp).catch((err) => {
++                    console.error('[tinypeer] setRemoteDescription failed', err);
++                });
+             }
+             else if (message.type === 'CANDIDATE') {
+-                pc.addIceCandidate(message.payload.candidate).catch(() => { });
++                pc.addIceCandidate(message.payload.candidate).catch((err) => {
++                    console.error('[tinypeer] addIceCandidate failed', err);
++                });
+             }
+         },
+         getPC: (connectionId) => {

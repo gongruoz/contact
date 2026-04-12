@@ -4,6 +4,7 @@ import { computeSimilarity, resetSimilarity } from "./similarity";
 import {
   createRoom, joinRoom, sendFeatures, burstSendFeatures,
   onPeerData, onPeerConnected, onPeerDisconnected,
+  agentPeerDebug,
 } from "./peer";
 import { setHint, showRoomCode, showConnected, showDisconnected, onCreateRoom, onJoinRoom, setStatus, setPeerError, fadeOutHint } from "./ui";
 import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
@@ -201,23 +202,57 @@ function isTargetInsideConnectUI(target: EventTarget | null): boolean {
   return area ? area.contains(target) : false;
 }
 
+function warnBadDevOrigin(): void {
+  if (typeof location === "undefined") return;
+  const h = location.hostname;
+  if (/^198\.18\./.test(h)) {
+    // #region agent log
+    agentPeerDebug(
+      "main.ts:warnBadDevOrigin",
+      "hostname is 198.18.x (VPN/tunnel range — not real LAN)",
+      { hostname: h },
+      "G",
+    );
+    // #endregion
+    setPeerError(
+      "wrong address for phone pairing",
+      "198.18.x.x is usually a VPN/proxy virtual IP (e.g. Clash/Surge), not your Wi‑Fi. On Mac and iPhone open only the https://192.168… line from the terminal. Turn VPN off on the Mac while testing if unsure.",
+      true,
+    );
+    return;
+  }
+  if (isMobile() && (h === "localhost" || h === "127.0.0.1")) {
+    // #region agent log
+    agentPeerDebug("main.ts:warnBadDevOrigin", "phone using localhost origin", { hostname: h }, "G");
+    // #endregion
+    setPeerError(
+      "wrong address on phone",
+      "localhost on the phone is the phone itself, not your Mac. Use the https://192.168… Network URL from npm run dev.",
+      true,
+    );
+  }
+}
+
 async function init() {
+  warnBadDevOrigin();
   if (isMobile()) {
     if (!window.isSecureContext) {
       setHint("use HTTPS — motion needs a secure page");
     } else {
       setHint("create or join · then tap to dance");
     }
+    /** No `pointerdown` here: on iOS Safari it often fires before click/touchend and
+     *  `DeviceMotionEvent.requestPermission()` then resolves denied with no system prompt. */
+    const touchendOpts: AddEventListenerOptions = { passive: true };
     const detachGesture = () => {
-      window.removeEventListener("pointerdown", startOnTap, false);
-      window.removeEventListener("touchend", startOnTap, false);
+      window.removeEventListener("touchend", startOnTap, touchendOpts);
       window.removeEventListener("click", startOnTap, false);
     };
     let started = false;
     const startOnTap = async (ev: Event) => {
       if (started) return;
       if (isTargetInsideConnectUI(ev.target)) return;
-      if (ev.type === "pointerdown" && (ev as PointerEvent).button !== 0) return;
+      if (ev.type === "click" && ev instanceof MouseEvent && ev.button !== 0) return;
       started = true;
       detachGesture();
       if (!window.isSecureContext) {
@@ -232,8 +267,7 @@ async function init() {
       setHint("move your body — make it dance");
       startSensor(onSensorSample);
     };
-    window.addEventListener("pointerdown", startOnTap, false);
-    window.addEventListener("touchend", startOnTap, false);
+    window.addEventListener("touchend", startOnTap, touchendOpts);
     window.addEventListener("click", startOnTap, false);
   } else {
     setHint("move your mouse — make it dance");
