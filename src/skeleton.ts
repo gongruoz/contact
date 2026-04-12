@@ -15,9 +15,9 @@ export const SKEL_PARAMS = {
   breatheScale: 0.55,
   stiffness: 0.11,
   leanAmount: 45,
-  headRadius: 12,
+  headRadius: 18,
   peerAttraction: 0.06,
-  snapDist: 33,
+  snapDist: 50,
 };
 
 // ---- Types ----
@@ -54,6 +54,8 @@ export interface Skeleton {
   smRawX: number; smRawY: number;
   _amp: number; _freq: number; _axis: number; _smooth: number;
   _speed: number; _rhythm: number;
+  /** Seconds of continuous low input; drives slow return to upright rest pose. */
+  idleTimer: number;
 }
 
 export interface SkeletonMergePair {
@@ -63,9 +65,23 @@ export interface SkeletonMergePair {
 
 // ---- Joint definitions — p1: inverted △ torso, 3-point limbs; FIG_SCALE + narrow shoulders ----
 
-const FIG_SCALE = 1.5;
+/** World scale of the physique figure (2.25 = prior 1.5× layout × another 1.5×). */
+const FIG_SCALE = 2.25;
 /** Extra narrowing on shoulder x (torso reads smaller vs limbs). */
 const SHOULDER_X_NARROW = 0.66;
+
+/** Prior layout scale (FIG_SCALE was 1.5); used to scale interaction radii with figure size. */
+const FIG_SCALE_PREV = 1.5;
+const SIZE_RATIO = FIG_SCALE / FIG_SCALE_PREV;
+
+const IDLE_INPUT_THRESH = 0.028;
+const IDLE_GRACE_SEC = 1.4;
+const IDLE_REC_FULL_SEC = 14;
+
+function smoothstep01(t: number): number {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+}
 
 const REST_TEMPLATE: Record<string, { x: number; y: number }> = {
   head:       { x: 0,    y: -118 },
@@ -94,6 +110,18 @@ function buildRestPositions(): Record<string, { x: number; y: number }> {
 }
 
 const REST_POSITIONS = buildRestPositions();
+
+/** COM of the upright template (joint targets are offset from anchor by rest − COM_REST). */
+const COM_REST: { x: number; y: number } = (() => {
+  let sx = 0, sy = 0;
+  const vals = Object.values(REST_POSITIONS);
+  for (const p of vals) {
+    sx += p.x;
+    sy += p.y;
+  }
+  const n = vals.length || 1;
+  return { x: sx / n, y: sy / n };
+})();
 
 const BONE_DEFS: { a: string; b: string; render: boolean }[] = [
   // neck: invisible — head to shoulders for stability
@@ -173,6 +201,7 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
     smRawX: 0, smRawY: 0,
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
     _speed: 0, _rhythm: 0,
+    idleTimer: 0,
   };
   s.distances = computeDistances(s.activeJoint);
   return s;
@@ -251,38 +280,46 @@ function solve(s: Skeleton, iter: number) {
 }
 
 /** Rest length softly tracks actual span so bones stretch and rebound elastically. */
-function adaptRest(s: Skeleton) {
+function adaptRest(s: Skeleton, idleRec: number) {
   for (const b of s.bones) {
     const ja = s.joints[b.a], jb = s.joints[b.b];
     const d = Math.hypot(jb.x - ja.x, jb.y - ja.y);
     const rate = b.render ? 0.11 : 0.055;
     const lo = b.baseRest * (b.render ? 0.42 : 0.32);
     const hi = b.baseRest * (b.render ? 1.72 : 1.9);
-    const target = Math.max(lo, Math.min(hi, d));
+    let target = Math.max(lo, Math.min(hi, d));
+    if (idleRec > 0.04) {
+      target += (b.baseRest - target) * (0.28 * idleRec);
+    }
     b.rest += (target - b.rest) * rate;
+    if (idleRec > 0.08) {
+      b.rest += (b.baseRest - b.rest) * (0.05 + 0.12 * idleRec);
+    }
   }
 }
 
 function spreadPressure(s: Skeleton, strength = 0.2) {
+  const minD = 14 * SIZE_RATIO;
   const { x: cx, y: cy } = comXY(s.joints);
   for (const j of Object.values(s.joints)) {
     const dx = j.x - cx, dy = j.y - cy;
     const d = Math.hypot(dx, dy);
-    if (d < 14 && d > 0.01) {
-      const push = ((14 - d) / 14) * strength;
+    if (d < minD && d > 0.01) {
+      const push = ((minD - d) / minD) * strength;
       j.fx += (dx / d) * push; j.fy += (dy / d) * push;
     }
   }
 }
 
 function boneMinLength(s: Skeleton) {
+  const minLen = 10 * SIZE_RATIO;
   for (const b of s.bones) {
     if (!b.render) continue;
     const ja = s.joints[b.a], jb = s.joints[b.b];
     const dx = jb.x - ja.x, dy = jb.y - ja.y;
     const d = Math.hypot(dx, dy);
-    if (d < 10 && d > 0.01) {
-      const push = ((10 - d) / 10) * 0.2;
+    if (d < minLen && d > 0.01) {
+      const push = ((minLen - d) / minLen) * 0.2;
       const nx = dx / d, ny = dy / d;
       ja.fx -= nx * push; ja.fy -= ny * push;
       jb.fx += nx * push; jb.fy += ny * push;
@@ -327,6 +364,15 @@ export function driveSkeleton(
   s: Skeleton, f: Features,
   rawAx: number, rawAy: number, dt: number,
 ) {
+  const inputLen = Math.hypot(rawAx, rawAy);
+  if (inputLen < IDLE_INPUT_THRESH) s.idleTimer += dt;
+  else s.idleTimer = 0;
+
+  let idleRec = 0;
+  if (s.idleTimer > IDLE_GRACE_SEC) {
+    idleRec = smoothstep01((s.idleTimer - IDLE_GRACE_SEC) / IDLE_REC_FULL_SEC);
+  }
+
   s.smRawX += RAW_SMOOTH * (rawAx - s.smRawX);
   s.smRawY += RAW_SMOOTH * (rawAy - s.smRawY);
   let ax = s.smRawX, ay = s.smRawY;
@@ -354,19 +400,25 @@ export function driveSkeleton(
   for (const b of s.bones) b.stiffness = b.render ? eStiff : bStiff;
 
   const maxLean = P.leanAmount * express;
-  s.leanX += (ax * maxLean - s.leanX) * 0.065;
-  s.leanY += (ay * maxLean - s.leanY) * 0.065;
+  const leanMotion = (1 - idleRec);
+  const leanRate = 0.065 * leanMotion + (0.2 + 0.58 * idleRec) * idleRec;
+  const targetLeanX = ax * maxLean * leanMotion;
+  const targetLeanY = ay * maxLean * leanMotion;
+  s.leanX += (targetLeanX - s.leanX) * leanRate;
+  s.leanY += (targetLeanY - s.leanY) * leanRate;
 
   let tiltTarget = 0;
   if (rawLen > 0.04) {
     tiltTarget = Math.atan2(ay, ax) * 0.28;
     tiltTarget = Math.max(-0.55, Math.min(0.55, tiltTarget));
   }
+  tiltTarget *= leanMotion;
   const prevTilt = s.tiltSmoothed;
-  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * 0.058;
+  const tiltFollow = 0.058 * leanMotion + (0.11 + 0.42 * idleRec) * idleRec;
+  s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * tiltFollow;
   const dTilt = s.tiltSmoothed - prevTilt;
 
-  updateFocus(s, dt, ax, ay);
+  if (idleRec < 0.48) updateFocus(s, dt, ax, ay);
 
   const fdx = rawLen > 0.015 ? ax / rawLen : 0;
   const fdy = rawLen > 0.015 ? ay / rawLen : 0;
@@ -377,46 +429,66 @@ export function driveSkeleton(
   const { x: comx, y: comy } = comXY(s.joints);
   const active = s.activeJoint;
   const aj = s.joints[active];
+  const danceMul = 1 - idleRec * 0.9;
 
   for (const j of Object.values(s.joints)) {
     if (j.name !== active) continue;
 
     const phaseOff = phaseSpread * 0.35;
 
-    j.fx += fdx * forceMag;
-    j.fy += fdy * forceMag;
+    j.fx += fdx * forceMag * danceMul;
+    j.fy += fdy * forceMag * danceMul;
 
     const rx = aj.x - comx, ry = aj.y - comy;
     const rl = Math.hypot(rx, ry) || 1e-8;
     const ux = rx / rl, uy = ry / rl;
     const off = (JOINT_NAMES.indexOf(active) / JOINT_NAMES.length) * Math.PI * 2;
     const breathe = (0.04 + amp * 0.22 + motionMag * 0.16) * P.breatheScale *
-      Math.sin(s.phase + off + phaseOff);
+      Math.sin(s.phase + off + phaseOff) * danceMul;
     j.fx += ux * breathe; j.fy += uy * breathe;
 
-    const spontW = 0.036 * P.driftScale;
+    const spontW = 0.036 * P.driftScale * danceMul;
     j.fx += Math.sin(t * j.driftFreq + j.driftPhase) * j.driftAmp * spontW;
     j.fy += Math.cos(t * j.driftFreq * 0.7 + j.driftPhase) * j.driftAmp * spontW;
 
     if (rawLen > 0.025) {
       const px = -fdy, py = fdx;
-      const tw = (px * -uy + py * ux) * rawLen * (0.6 + motionMag * 0.45);
+      const tw = (px * -uy + py * ux) * rawLen * (0.6 + motionMag * 0.45) * danceMul;
       j.fx += -uy * tw; j.fy += ux * tw;
     }
   }
 
   spreadPressure(s, 0.1);
   boneMinLength(s);
-  adaptRest(s);
-  integrate(s, dt, 1 + motionMag * 0.42);
+  adaptRest(s, idleRec);
+  integrate(s, dt, 1 + motionMag * 0.42 * danceMul);
   solve(s, 9);
   rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);
+  lockCOM(s);
+  recoverJointsTowardRest(s, idleRec, dt);
+}
+
+/** After physics, gently pull joints toward upright template; recenters COM. */
+function recoverJointsTowardRest(s: Skeleton, rec: number, dt: number) {
+  if (rec < 0.002) return;
+  const pullLambda = 0.16 + 0.88 * rec;
+  const w = 1 - Math.exp(-pullLambda * dt);
+  const mx = s.cx + s.leanX;
+  const my = s.cy + s.leanY;
+  for (const j of Object.values(s.joints)) {
+    const tx = mx + j.restX - COM_REST.x;
+    const ty = my + j.restY - COM_REST.y;
+    j.x += (tx - j.x) * w;
+    j.px += (tx - j.px) * w;
+    j.y += (ty - j.y) * w;
+    j.py += (ty - j.py) * w;
+  }
   lockCOM(s);
 }
 
 // ---- Rendering ----
 
-const GAP = 11;
+const GAP = 11 * SIZE_RATIO;
 
 export type DrawRole = "self" | "peer";
 

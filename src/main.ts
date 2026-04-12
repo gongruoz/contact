@@ -284,7 +284,7 @@ function loop(time: number) {
 
     ctx.clearRect(0, 0, w, h);
 
-    const skelGap = 7;
+    const skelGap = 11;
     selfTrail.draw(ctx, getSkeletonBones(selfSkel), "self", skelGap);
     if (connected && peerFeatures !== null) {
       peerTrail.draw(ctx, getSkeletonBones(peerSkel), "peer", skelGap);
@@ -434,7 +434,7 @@ async function init() {
       { key: "breatheScale",    label: "breathe",      min: 0,    max: 2,     step: 0.05  },
       { key: "stiffness",       label: "stiffness",    min: 0.01, max: 0.3,   step: 0.005 },
       { key: "leanAmount",      label: "lean",         min: 0,    max: 100,   step: 1     },
-      { key: "headRadius",      label: "head size",    min: 3,    max: 18,    step: 0.5   },
+      { key: "headRadius",      label: "head size",    min: 3,    max: 24,    step: 0.5   },
       { key: "peerAttraction",  label: "peer pull",    min: 0,    max: 0.3,   step: 0.005 },
       { key: "snapDist",        label: "snap dist",    min: 5,    max: 60,    step: 1     },
     ],
