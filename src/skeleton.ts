@@ -70,57 +70,45 @@ export interface SkeletonMergePair {
 // ---- Joint definitions — more anatomical ----
 
 const REST_POSITIONS: Record<string, { x: number; y: number }> = {
-  head:       { x: 0,    y: -120 },
-  torso_tl:   { x: -22,  y: -78  },
-  torso_tr:   { x: 22,   y: -78  },
-  torso_bl:   { x: -18,  y: -18  },
-  torso_br:   { x: 18,   y: -18  },
-  shoulder_l: { x: -42,  y: -72  },
-  shoulder_r: { x: 42,   y: -72  },
-  elbow_l:    { x: -60,  y: -35  },
-  elbow_r:    { x: 60,   y: -35  },
-  hand_l:     { x: -72,  y: 5    },
-  hand_r:     { x: 72,   y: 5    },
-  hip_l:      { x: -16,  y: 0    },
-  hip_r:      { x: 16,   y: 0    },
-  knee_l:     { x: -22,  y: 58   },
-  knee_r:     { x: 22,   y: 58   },
+  head:       { x: 0,    y: -118 },
+  torso_top:  { x: 0,    y: -90  },
+  torso_bl:   { x: -24,  y: -26  },
+  torso_br:   { x: 24,   y: -26  },
+  shoulder_l: { x: -44,  y: -78  },
+  shoulder_r: { x: 44,   y: -78  },
+  hand_l:     { x: -74,  y: 6    },
+  hand_r:     { x: 74,   y: 6    },
+  hip:        { x: 0,    y: 6    },
   foot_l:     { x: -28,  y: 115  },
   foot_r:     { x: 28,   y: 115  },
 };
 
 const BONE_DEFS: { a: string; b: string; render: boolean }[] = [
-  // neck (physics only — invisible)
-  { a: "head",     b: "torso_tl", render: false },
-  { a: "head",     b: "torso_tr", render: false },
-  // torso simplex (4 edges + 2 diagonals for structure)
-  { a: "torso_tl", b: "torso_tr", render: true  },
-  { a: "torso_tr", b: "torso_br", render: true  },
-  { a: "torso_br", b: "torso_bl", render: true  },
-  { a: "torso_bl", b: "torso_tl", render: true  },
-  { a: "torso_tl", b: "torso_br", render: false },
-  { a: "torso_tr", b: "torso_bl", render: false },
-  // arms
-  { a: "shoulder_l", b: "torso_tl", render: true  },
-  { a: "shoulder_r", b: "torso_tr", render: true  },
-  { a: "shoulder_l", b: "elbow_l",  render: true  },
-  { a: "shoulder_r", b: "elbow_r",  render: true  },
-  { a: "elbow_l",    b: "hand_l",   render: true  },
-  { a: "elbow_r",    b: "hand_r",   render: true  },
-  // legs
-  { a: "torso_bl",   b: "hip_l",    render: true  },
-  { a: "torso_br",   b: "hip_r",    render: true  },
-  { a: "hip_l",      b: "knee_l",   render: true  },
-  { a: "hip_r",      b: "knee_r",   render: true  },
-  { a: "knee_l",     b: "foot_l",   render: true  },
-  { a: "knee_r",     b: "foot_r",   render: true  },
+  // neck (physics only — invisible, shorter than before)
+  { a: "head",       b: "torso_top",  render: false },
+  // torso triangle + light brace
+  { a: "torso_top",  b: "torso_bl",   render: true  },
+  { a: "torso_bl",   b: "torso_br",   render: true  },
+  { a: "torso_br",   b: "torso_top",  render: true  },
+  { a: "torso_top",  b: "torso_br",   render: false },
+  // arms: shoulder ↔ hand (two points each side)
+  { a: "shoulder_l", b: "torso_top",  render: true  },
+  { a: "shoulder_r", b: "torso_top",  render: true  },
+  { a: "shoulder_l", b: "hand_l",     render: true  },
+  { a: "shoulder_r", b: "hand_r",     render: true  },
+  // legs: single hip, hip ↔ foot (two points each side)
+  { a: "torso_bl",   b: "hip",        render: true  },
+  { a: "torso_br",   b: "hip",        render: true  },
+  { a: "hip",        b: "foot_l",     render: true  },
+  { a: "hip",        b: "foot_r",     render: true  },
   // structural bracing
-  { a: "hip_l",      b: "hip_r",    render: false },
   { a: "shoulder_l", b: "shoulder_r", render: false },
+  { a: "torso_bl",   b: "foot_l",     render: false },
+  { a: "torso_br",   b: "foot_r",     render: false },
 ];
 
 const JOINT_NAMES = Object.keys(REST_POSITIONS);
-const TORSO_JOINTS = new Set(["torso_tl", "torso_tr", "torso_bl", "torso_br"]);
+const TORSO_JOINTS = new Set(["torso_top", "torso_bl", "torso_br"]);
 const EXTREMITIES = new Set(["hand_l", "hand_r", "foot_l", "foot_r"]);
 
 // ---- Adjacency ----
@@ -164,7 +152,7 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
   const s: Skeleton = {
     joints, bones, cx, cy,
     phase: Math.random() * Math.PI * 2,
-    activeJoint: "torso_tl",
+    activeJoint: "torso_top",
     distances: {},
     focusTimer: 0,
     focusInterval: 4500 + Math.random() * 2500,
@@ -536,9 +524,9 @@ export function drawPeerThreads(
 // ---- Merge (similarity-gated, kept for backward compat) ----
 
 const MERGE_REGIONS: { threshold: number; joints: string[] }[] = [
-  { threshold: 0.15, joints: ["torso_tl", "torso_br", "hip_l", "hip_r"] },
-  { threshold: 0.35, joints: ["shoulder_l", "shoulder_r", "knee_l", "knee_r"] },
-  { threshold: 0.55, joints: ["elbow_l", "elbow_r", "head"] },
+  { threshold: 0.15, joints: ["torso_top", "torso_bl", "torso_br", "hip"] },
+  { threshold: 0.35, joints: ["shoulder_l", "shoulder_r"] },
+  { threshold: 0.55, joints: ["head"] },
   { threshold: 0.78, joints: ["hand_l", "hand_r", "foot_l", "foot_r"] },
 ];
 
