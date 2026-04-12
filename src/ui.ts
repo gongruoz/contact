@@ -135,3 +135,21 @@ export function hideUI() {
   hint.classList.add("hidden");
   btnExit.classList.add("hidden");
 }
+
+// ---- Mode indicator ----
+
+const modeIndicator = document.getElementById("mode-indicator")!;
+let modeIndicatorTimer = 0;
+
+export function showModeIndicator(mode: string, trails: boolean) {
+  const modeLabel = mode === "simplex" ? "shape" : "body";
+  const trailLabel = trails ? "on" : "off";
+  modeIndicator.textContent = `1: shape · 2: body · t: trail\n${modeLabel} · trail ${trailLabel}`;
+  modeIndicator.style.opacity = "0.45";
+  modeIndicator.classList.remove("hidden");
+
+  clearTimeout(modeIndicatorTimer);
+  modeIndicatorTimer = window.setTimeout(() => {
+    modeIndicator.style.opacity = "0";
+  }, 3000);
+}

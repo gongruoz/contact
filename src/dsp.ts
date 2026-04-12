@@ -5,6 +5,8 @@ export interface Features {
   frequency: number; // [0,1]
   axis: number; // hue angle [0,1]
   smoothness: number; // [0,1]  0=smooth, 1=jerky
+  speed: number; // [0,1]  short-window instantaneous intensity
+  rhythm: number; // [0,1]  peak-interval regularity (1 = perfectly periodic)
 }
 
 const BUFFER_SIZE = 128;
@@ -92,7 +94,72 @@ const JERK_MAX = 0.35;
 /** EMA on extracted features (reduces feature flicker from noisy buffers) */
 const FEATURE_EMA = 0.16;
 
-let featSmooth: Features = { amplitude: 0, frequency: 0, axis: 0.5, smoothness: 0 };
+const SPEED_WINDOW = 8;
+const SPEED_MAG_MAX = 0.6;
+const PEAK_THRESHOLD = 0.04;
+const MAX_PEAK_HISTORY = 12;
+
+const peakTimes: number[] = [];
+let lastPeakIdx = -2;
+
+function shortWindowRms(): number {
+  if (count < 2) return 0;
+  const n = Math.min(count, SPEED_WINDOW);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const idx = (head - n + i + BUFFER_SIZE) % BUFFER_SIZE;
+    const v = magBuf[idx];
+    sum += v * v;
+  }
+  return Math.sqrt(sum / n);
+}
+
+function detectPeaksAndRhythm(): number {
+  const n = Math.min(count, BUFFER_SIZE);
+  if (n < 3) return 0;
+
+  const newest = (head - 1 + BUFFER_SIZE) % BUFFER_SIZE;
+  const prev = (head - 2 + BUFFER_SIZE) % BUFFER_SIZE;
+  const prev2 = (head - 3 + BUFFER_SIZE) % BUFFER_SIZE;
+
+  if (
+    magBuf[prev] > magBuf[prev2] &&
+    magBuf[prev] > magBuf[newest] &&
+    magBuf[prev] > PEAK_THRESHOLD &&
+    (count - 1) - lastPeakIdx >= 3
+  ) {
+    lastPeakIdx = count - 1;
+    peakTimes.push(performance.now());
+    if (peakTimes.length > MAX_PEAK_HISTORY) peakTimes.shift();
+  }
+
+  if (peakTimes.length < 3) return 0;
+
+  const cutoff = performance.now() - 4000;
+  while (peakTimes.length > 0 && peakTimes[0] < cutoff) peakTimes.shift();
+  if (peakTimes.length < 3) return 0;
+
+  const intervals: number[] = [];
+  for (let i = 1; i < peakTimes.length; i++) {
+    intervals.push(peakTimes[i] - peakTimes[i - 1]);
+  }
+
+  let iSum = 0;
+  for (const v of intervals) iSum += v;
+  const iMean = iSum / intervals.length;
+  if (iMean < 1) return 0;
+
+  let varSum = 0;
+  for (const v of intervals) varSum += (v - iMean) * (v - iMean);
+  const iStd = Math.sqrt(varSum / intervals.length);
+
+  return Math.max(0, Math.min(1, 1 - iStd / iMean));
+}
+
+let featSmooth: Features = {
+  amplitude: 0, frequency: 0, axis: 0.5, smoothness: 0,
+  speed: 0, rhythm: 0,
+};
 
 export function extractFeatures(): Features {
   const magRms = rms(magBuf);
@@ -114,16 +181,23 @@ export function extractFeatures(): Features {
   const jerkRms = rms(jerkBuf);
   const smoothness = Math.min(jerkRms / JERK_MAX, 1);
 
+  const spd = Math.min(shortWindowRms() / SPEED_MAG_MAX, 1);
+  const rhy = detectPeaksAndRhythm();
+
   const k = FEATURE_EMA;
   featSmooth.amplitude += k * (amp - featSmooth.amplitude);
   featSmooth.frequency += k * (freq - featSmooth.frequency);
   featSmooth.axis += k * (axis - featSmooth.axis);
   featSmooth.smoothness += k * (smoothness - featSmooth.smoothness);
+  featSmooth.speed += k * (spd - featSmooth.speed);
+  featSmooth.rhythm += k * (rhy - featSmooth.rhythm);
   return {
     amplitude: featSmooth.amplitude,
     frequency: featSmooth.frequency,
     axis: featSmooth.axis,
     smoothness: featSmooth.smoothness,
+    speed: featSmooth.speed,
+    rhythm: featSmooth.rhythm,
   };
 }
 
@@ -137,5 +211,7 @@ export function arrayToFeatures(a: Float32Array | number[]): Features {
     frequency: a[1],
     axis: a[2],
     smoothness: a[3],
+    speed: a.length > 4 ? a[4] : 0,
+    rhythm: a.length > 5 ? a[5] : 0,
   };
 }

@@ -179,12 +179,29 @@
       word-break: break-word;
     }
     .hidden { display: none !important; }
+
+    #mode-indicator {
+      position: fixed;
+      top: max(1.1rem, env(safe-area-inset-top, 0px));
+      right: 1rem;
+      font-size: 0.82em;
+      font-weight: 300;
+      letter-spacing: inherit;
+      opacity: 0;
+      text-align: right;
+      line-height: 1.55;
+      white-space: pre;
+      color: #888;
+      transition: opacity 1.2s ease-out;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
   <canvas id="gl"></canvas>
   <div id="ui">
     <div id="hint" class="interactive">move your mouse — make it dance</div>
+    <div id="mode-indicator" class="hidden"></div>
     <div id="connect-area" class="interactive">
       <div id="tagline"><span class="tagline-line1">show how you move · feel how they move</span><span class="tagline-line2">sync up to make contact</span></div>
       <div id="connect-controls">

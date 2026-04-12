@@ -8,6 +8,7 @@ import {
 import {
   setHint, showRoomCode, showConnected, showDisconnected,
   onCreateRoom, onJoinRoom, onExitRoom, setStatus, setPeerError,
+  showModeIndicator,
 } from "./ui";
 import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
 import {
@@ -15,11 +16,18 @@ import {
   computeMergePairs, applyFusion, drawMergeEffects,
   type Simplex, type MergePair,
 } from "./creature";
+import {
+  createSkeleton, driveSkeleton, drawSkeleton,
+  computeSkeletonMergePairs, applySkeletonFusion, drawSkeletonMergeEffects,
+  getSkeletonPoints, getSkeletonBones,
+  type Skeleton, type SkeletonMergePair,
+} from "./skeleton";
+import { TrailSystem } from "./trail";
 
 const canvas = document.getElementById("gl") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 
-let selfFeatures: Features = { amplitude: 0, frequency: 0, axis: 0, smoothness: 0 };
+let selfFeatures: Features = { amplitude: 0, frequency: 0, axis: 0, smoothness: 0, speed: 0, rhythm: 0 };
 /** While connected, always non-null so the peer diagram can render before the first packet. */
 let peerFeatures: Features | null = null;
 
@@ -28,6 +36,8 @@ const PLACEHOLDER_PEER_FEATURES: Features = {
   frequency: 0,
   axis: 0.5,
   smoothness: 0,
+  speed: 0,
+  rhythm: 0,
 };
 let peerRawAx = 0;
 let peerRawAy = 0;
@@ -36,8 +46,16 @@ let connected = false;
 let latestRawAx = 0;
 let latestRawAy = 0;
 
+type FigureMode = "simplex" | "skeleton";
+let mode: FigureMode = "simplex";
+
 let selfSimplex: Simplex;
 let peerSimplex: Simplex;
+let selfSkel: Skeleton;
+let peerSkel: Skeleton;
+
+const selfTrail = new TrailSystem();
+const peerTrail = new TrailSystem();
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -46,15 +64,19 @@ function resizeCanvas() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-function initSimplexes() {
+function initFigures() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   selfSimplex = createSimplex(w / 2, h / 2);
   peerSimplex = createSimplex(w / 2, h / 2);
+  selfSkel = createSkeleton(w / 2, h / 2);
+  peerSkel = createSkeleton(w / 2, h / 2);
+  selfTrail.clear();
+  peerTrail.clear();
 }
 
 resizeCanvas();
-initSimplexes();
+initFigures();
 
 window.addEventListener("resize", () => {
   resizeCanvas();
@@ -62,9 +84,13 @@ window.addEventListener("resize", () => {
   const h = window.innerHeight;
   selfSimplex.cx = w / 2;
   selfSimplex.cy = h / 2;
+  selfSkel.cx = w / 2;
+  selfSkel.cy = h / 2;
   if (!connected) {
     peerSimplex.cx = w / 2;
     peerSimplex.cy = h / 2;
+    peerSkel.cx = w / 2;
+    peerSkel.cy = h / 2;
   }
 });
 
@@ -77,6 +103,10 @@ function layoutAnchors(sim: number) {
   selfSimplex.cy = h / 2;
   peerSimplex.cx = w / 2 + half;
   peerSimplex.cy = h / 2;
+  selfSkel.cx = w / 2 - half;
+  selfSkel.cy = h / 2;
+  peerSkel.cx = w / 2 + half;
+  peerSkel.cy = h / 2;
 }
 
 function onSensorSample(s: SensorSample) {
@@ -162,6 +192,20 @@ onPeerDisconnected(() => {
 
 let lastTime = 0;
 
+function getSimplexPoints(s: Simplex): Record<string, { x: number; y: number }> {
+  const pts: Record<string, { x: number; y: number }> = {};
+  for (let i = 0; i < s.particles.length; i++) {
+    pts[String(i)] = { x: s.particles[i].x, y: s.particles[i].y };
+  }
+  return pts;
+}
+
+function getSimplexBones(s: Simplex): [string, string][] {
+  return s.constraints
+    .filter((c) => !c.isDiag)
+    .map((c) => [String(c.a), String(c.b)]);
+}
+
 function loop(time: number) {
   const dt = lastTime ? Math.min((time - lastTime) / 1000, 0.05) : 0.016;
   lastTime = time;
@@ -169,7 +213,6 @@ function loop(time: number) {
   maybeExtractAndSend(time);
 
   let similarity = 0;
-  let mergePairs: MergePair[] = [];
 
   if (connected && peerFeatures !== null) {
     similarity = computeSimilarity(selfFeatures, peerFeatures);
@@ -179,25 +222,74 @@ function loop(time: number) {
     const h = window.innerHeight;
     selfSimplex.cx = w / 2;
     selfSimplex.cy = h / 2;
+    selfSkel.cx = w / 2;
+    selfSkel.cy = h / 2;
   }
 
-  driveSimplex(selfSimplex, selfFeatures, latestRawAx, latestRawAy, dt);
-
-  if (connected && peerFeatures !== null) {
-    driveSimplex(peerSimplex, peerFeatures, peerRawAx, peerRawAy, dt);
-    mergePairs = computeMergePairs(selfSimplex, peerSimplex, similarity);
-    applyFusion(selfSimplex, peerSimplex, mergePairs, dt);
-  }
-
+  const motionMag = Math.hypot(latestRawAx, latestRawAy);
   const w = window.innerWidth;
   const h = window.innerHeight;
-  ctx.clearRect(0, 0, w, h);
 
-  drawSimplex(ctx, selfSimplex, 1, "self");
+  if (mode === "simplex") {
+    let mergePairs: MergePair[] = [];
 
-  if (connected && peerFeatures !== null) {
-    drawSimplex(ctx, peerSimplex, 1, "peer");
-    drawMergeEffects(ctx, selfSimplex, peerSimplex, mergePairs, time);
+    driveSimplex(selfSimplex, selfFeatures, latestRawAx, latestRawAy, dt);
+
+    if (connected && peerFeatures !== null) {
+      driveSimplex(peerSimplex, peerFeatures, peerRawAx, peerRawAy, dt);
+      mergePairs = computeMergePairs(selfSimplex, peerSimplex, similarity);
+      applyFusion(selfSimplex, peerSimplex, mergePairs, dt);
+    }
+
+    selfTrail.capture(getSimplexPoints(selfSimplex), motionMag, time);
+    if (connected && peerFeatures !== null) {
+      peerTrail.capture(getSimplexPoints(peerSimplex), Math.hypot(peerRawAx, peerRawAy), time);
+    }
+
+    ctx.clearRect(0, 0, w, h);
+
+    const simplexGap = 6;
+    selfTrail.draw(ctx, getSimplexBones(selfSimplex), "self", simplexGap);
+    if (connected && peerFeatures !== null) {
+      peerTrail.draw(ctx, getSimplexBones(peerSimplex), "peer", simplexGap);
+    }
+
+    drawSimplex(ctx, selfSimplex, 1, "self");
+
+    if (connected && peerFeatures !== null) {
+      drawSimplex(ctx, peerSimplex, 1, "peer");
+      drawMergeEffects(ctx, selfSimplex, peerSimplex, mergePairs, time);
+    }
+  } else {
+    let skelMerge: SkeletonMergePair[] = [];
+
+    driveSkeleton(selfSkel, selfFeatures, latestRawAx, latestRawAy, dt);
+
+    if (connected && peerFeatures !== null) {
+      driveSkeleton(peerSkel, peerFeatures, peerRawAx, peerRawAy, dt);
+      skelMerge = computeSkeletonMergePairs(similarity);
+      applySkeletonFusion(selfSkel, peerSkel, skelMerge, dt);
+    }
+
+    selfTrail.capture(getSkeletonPoints(selfSkel), motionMag, time);
+    if (connected && peerFeatures !== null) {
+      peerTrail.capture(getSkeletonPoints(peerSkel), Math.hypot(peerRawAx, peerRawAy), time);
+    }
+
+    ctx.clearRect(0, 0, w, h);
+
+    const skelGap = 7;
+    selfTrail.draw(ctx, getSkeletonBones(selfSkel), "self", skelGap, selfSkel.activeJoint);
+    if (connected && peerFeatures !== null) {
+      peerTrail.draw(ctx, getSkeletonBones(peerSkel), "peer", skelGap, peerSkel.activeJoint);
+    }
+
+    drawSkeleton(ctx, selfSkel, 1, "self");
+
+    if (connected && peerFeatures !== null) {
+      drawSkeleton(ctx, peerSkel, 1, "peer");
+      drawSkeletonMergeEffects(ctx, selfSkel, peerSkel, skelMerge, time);
+    }
   }
 
   requestAnimationFrame(loop);
@@ -298,6 +390,28 @@ async function init() {
     destroyPeer();
   });
 
+  window.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement) return;
+    if (e.key === "1" && mode !== "simplex") {
+      mode = "simplex";
+      selfTrail.clear();
+      peerTrail.clear();
+      showModeIndicator(mode, selfTrail.enabled);
+    } else if (e.key === "2" && mode !== "skeleton") {
+      mode = "skeleton";
+      selfTrail.clear();
+      peerTrail.clear();
+      showModeIndicator(mode, selfTrail.enabled);
+    } else if (e.key === "t" || e.key === "T") {
+      const on = !selfTrail.enabled;
+      selfTrail.enabled = on;
+      peerTrail.enabled = on;
+      if (!on) { selfTrail.clear(); peerTrail.clear(); }
+      showModeIndicator(mode, on);
+    }
+  });
+
+  showModeIndicator(mode, selfTrail.enabled);
   requestAnimationFrame(loop);
 }
 
