@@ -1,10 +1,11 @@
 import type { Features } from "./dsp";
+import { isMobile } from "./sensor";
 import {
-  RGB_PEER_STROKE,
-  RGB_SELF_STROKE,
-  RGB_THREAD,
+  segmentKeySorted,
   strokeGappedLineEndFade,
+  strokeGappedLineWithSketches,
 } from "./lineGradient";
+import { getFigurePalette } from "./theme";
 
 // ---- Tunable parameters (exposed to sidebar) ----
 
@@ -68,15 +69,17 @@ export interface SkeletonMergePair {
 /** World scale of the physique figure (2.25 = prior 1.5× layout × another 1.5×). */
 const FIG_SCALE = 2.25;
 /** Extra narrowing on shoulder x (torso reads smaller vs limbs). */
-const SHOULDER_X_NARROW = 0.66;
+const SHOULDER_X_NARROW = 0.63;
 
 /** Prior layout scale (FIG_SCALE was 1.5); used to scale interaction radii with figure size. */
 const FIG_SCALE_PREV = 1.5;
 const SIZE_RATIO = FIG_SCALE / FIG_SCALE_PREV;
 
 const IDLE_INPUT_THRESH = 0.028;
-const IDLE_GRACE_SEC = 1.4;
-const IDLE_REC_FULL_SEC = 14;
+/** No motion: start easing back toward upright after this brief hold. */
+const IDLE_GRACE_SEC = 0.45;
+/** Seconds after grace over which idle strength reaches full (shorter = snappier return to template). */
+const IDLE_REC_FULL_SEC = 3.2;
 
 function smoothstep01(t: number): number {
   const x = Math.max(0, Math.min(1, t));
@@ -84,19 +87,31 @@ function smoothstep01(t: number): number {
 }
 
 const REST_TEMPLATE: Record<string, { x: number; y: number }> = {
-  head:       { x: 0,    y: -118 },
-  shoulder_l: { x: -40,  y: -78  },
-  shoulder_r: { x: 40,   y: -78  },
-  hip:        { x: 0,    y: 8    },
-  elbow_l:    { x: -54,  y: -36  },
-  elbow_r:    { x: 54,   y: -36  },
-  hand_l:     { x: -70,  y: 10   },
-  hand_r:     { x: 70,   y: 10   },
-  knee_l:     { x: -22,  y: 62   },
-  knee_r:     { x: 22,   y: 62   },
-  foot_l:     { x: -28,  y: 116  },
-  foot_r:     { x: 28,   y: 116  },
+  /** Closer to torso (shorter neck). */
+  head:       { x: 0,    y: -104 },
+  /** Base of neck / top of torso. */
+  neck:       { x: 0,    y: -81  },
+  shoulder_l: { x: -38,  y: -69  },
+  shoulder_r: { x: 38,   y: -69  },
+  hip:        { x: 0,    y: 5    },
+  elbow_l:    { x: -52,  y: -37  },
+  elbow_r:    { x: 52,   y: -37  },
+  hand_l:     { x: -66,  y: 8    },
+  hand_r:     { x: 66,   y: 8    },
+  knee_l:     { x: -21,  y: 60   },
+  knee_r:     { x: 21,   y: 60   },
+  foot_l:     { x: -26,  y: 112  },
+  foot_r:     { x: 26,   y: 112  },
 };
+
+/** Pull each limb joint toward its parent so segments read shorter / more human. */
+const LIMB_SEGMENT = 0.86;
+
+function blendToward(
+  ax: number, ay: number, bx: number, by: number, t: number,
+): { x: number; y: number } {
+  return { x: ax + (bx - ax) * t, y: ay + (by - ay) * t };
+}
 
 function buildRestPositions(): Record<string, { x: number; y: number }> {
   const out: Record<string, { x: number; y: number }> = {};
@@ -106,6 +121,20 @@ function buildRestPositions(): Record<string, { x: number; y: number }> {
     if (name === "shoulder_l" || name === "shoulder_r") x *= SHOULDER_X_NARROW;
     out[name] = { x, y };
   }
+
+  const L = LIMB_SEGMENT;
+  const sl = out.shoulder_l, sr = out.shoulder_r, hip = out.hip;
+
+  out.elbow_l = blendToward(sl.x, sl.y, out.elbow_l.x, out.elbow_l.y, L);
+  out.hand_l = blendToward(out.elbow_l.x, out.elbow_l.y, out.hand_l.x, out.hand_l.y, L);
+  out.elbow_r = blendToward(sr.x, sr.y, out.elbow_r.x, out.elbow_r.y, L);
+  out.hand_r = blendToward(out.elbow_r.x, out.elbow_r.y, out.hand_r.x, out.hand_r.y, L);
+
+  out.knee_l = blendToward(hip.x, hip.y, out.knee_l.x, out.knee_l.y, L);
+  out.foot_l = blendToward(out.knee_l.x, out.knee_l.y, out.foot_l.x, out.foot_l.y, L);
+  out.knee_r = blendToward(hip.x, hip.y, out.knee_r.x, out.knee_r.y, L);
+  out.foot_r = blendToward(out.knee_r.x, out.knee_r.y, out.foot_r.x, out.foot_r.y, L);
+
   return out;
 }
 
@@ -124,9 +153,9 @@ const COM_REST: { x: number; y: number } = (() => {
 })();
 
 const BONE_DEFS: { a: string; b: string; render: boolean }[] = [
-  // neck: invisible — head to shoulders for stability
-  { a: "head",       b: "shoulder_l", render: false },
-  { a: "head",       b: "shoulder_r", render: false },
+  { a: "head",       b: "neck",       render: false },
+  { a: "neck",       b: "shoulder_l", render: false },
+  { a: "neck",       b: "shoulder_r", render: false },
   // torso: inverted triangle (shoulder line + sides to single hip)
   { a: "shoulder_l", b: "shoulder_r", render: true  },
   { a: "shoulder_l", b: "hip",        render: true  },
@@ -148,6 +177,7 @@ const BONE_DEFS: { a: string; b: string; render: boolean }[] = [
 
 const JOINT_NAMES = Object.keys(REST_POSITIONS);
 const TORSO_JOINTS = new Set(["shoulder_l", "shoulder_r", "hip"]);
+const NECK_JOINTS = new Set(["neck"]);
 const EXTREMITIES = new Set(["hand_l", "hand_r", "foot_l", "foot_r"]);
 
 // ---- Adjacency ----
@@ -166,13 +196,15 @@ function mkJoint(name: string, wx: number, wy: number): Joint {
   const x = wx + rest.x, y = wy + rest.y;
   const isExtrem = EXTREMITIES.has(name);
   const isTorso = TORSO_JOINTS.has(name);
+  const isNeck = NECK_JOINTS.has(name);
   const isHead = name === "head";
   return {
     name, x, y, px: x, py: y, fx: 0, fy: 0,
     restX: rest.x, restY: rest.y,
     driftFreq: 0.15 + Math.random() * 0.35,
     driftAmp: isTorso ? 0.4 + Math.random() * 0.6
-            : isHead ? 0.45 + Math.random() * 0.55
+            : isHead ? 0.32 + Math.random() * 0.38
+            : isNeck ? 0.28 + Math.random() * 0.35
             : isExtrem ? 1.2 + Math.random() * 1.8
             : 0.65 + Math.random() * 0.95,
     driftPhase: Math.random() * Math.PI * 2,
@@ -252,7 +284,9 @@ function rotateAroundAnchor(s: Skeleton, ax: number, ay: number, dTheta: number)
 
 const ACC = 3000;
 const RAW_SMOOTH = 0.042;
+const RAW_SMOOTH_MOBILE = 0.13;
 const RAW_DEAD = 0.018;
+const RAW_DEAD_MOBILE = 0.004;
 
 function integrate(s: Skeleton, dt: number, impulseMul = 1) {
   const a = dt * dt * ACC * impulseMul;
@@ -260,7 +294,8 @@ function integrate(s: Skeleton, dt: number, impulseMul = 1) {
   for (const j of Object.values(s.joints)) {
     const vx = (j.x - j.px) * d, vy = (j.y - j.py) * d;
     j.px = j.x; j.py = j.y;
-    j.x += vx + j.fx * a; j.y += vy + j.fy * a;
+    j.x += vx + j.fx * a;
+    j.y += vy + j.fy * a;
     j.fx = 0; j.fy = 0;
   }
 }
@@ -289,11 +324,11 @@ function adaptRest(s: Skeleton, idleRec: number) {
     const hi = b.baseRest * (b.render ? 1.72 : 1.9);
     let target = Math.max(lo, Math.min(hi, d));
     if (idleRec > 0.04) {
-      target += (b.baseRest - target) * (0.28 * idleRec);
+      target += (b.baseRest - target) * (0.42 * idleRec);
     }
     b.rest += (target - b.rest) * rate;
     if (idleRec > 0.08) {
-      b.rest += (b.baseRest - b.rest) * (0.05 + 0.12 * idleRec);
+      b.rest += (b.baseRest - b.rest) * (0.1 + 0.22 * idleRec);
     }
   }
 }
@@ -302,6 +337,7 @@ function spreadPressure(s: Skeleton, strength = 0.2) {
   const minD = 14 * SIZE_RATIO;
   const { x: cx, y: cy } = comXY(s.joints);
   for (const j of Object.values(s.joints)) {
+    if (j.name === "head") continue;
     const dx = j.x - cx, dy = j.y - cy;
     const d = Math.hypot(dx, dy);
     if (d < minD && d > 0.01) {
@@ -341,16 +377,20 @@ function updateFocus(s: Skeleton, dt: number, rawAx: number, rawAy: number) {
   if (!neighbors.length) return;
 
   if (Math.random() < 0.06) {
-    s.activeJoint = JOINT_NAMES[Math.floor(Math.random() * JOINT_NAMES.length)];
+    const pool = JOINT_NAMES.filter((n) => n !== "head");
+    s.activeJoint = pool[Math.floor(Math.random() * pool.length)] || "neck";
   } else {
     const active = s.joints[s.activeJoint];
-    const weighted = neighbors.map((n) => {
-      const nj = s.joints[n];
-      const dx = nj.restX - active.restX, dy = nj.restY - active.restY;
-      const len = Math.hypot(dx, dy) || 1;
-      const dot = (dx / len) * rawAx + (dy / len) * rawAy;
-      return { name: n, w: dot > 0.2 ? 3.5 : 1 };
-    });
+    const weighted = neighbors
+      .filter((n) => n !== "head")
+      .map((n) => {
+        const nj = s.joints[n];
+        const dx = nj.restX - active.restX, dy = nj.restY - active.restY;
+        const len = Math.hypot(dx, dy) || 1;
+        const dot = (dx / len) * rawAx + (dy / len) * rawAy;
+        return { name: n, w: dot > 0.2 ? 3.5 : 1 };
+      });
+    if (weighted.length === 0) return;
     let total = 0; for (const w of weighted) total += w.w;
     let r = Math.random() * total;
     for (const w of weighted) { r -= w.w; if (r <= 0) { s.activeJoint = w.name; break; } }
@@ -368,15 +408,19 @@ export function driveSkeleton(
   if (inputLen < IDLE_INPUT_THRESH) s.idleTimer += dt;
   else s.idleTimer = 0;
 
+  if (s.activeJoint === "head") s.activeJoint = "neck";
+
   let idleRec = 0;
   if (s.idleTimer > IDLE_GRACE_SEC) {
     idleRec = smoothstep01((s.idleTimer - IDLE_GRACE_SEC) / IDLE_REC_FULL_SEC);
   }
 
-  s.smRawX += RAW_SMOOTH * (rawAx - s.smRawX);
-  s.smRawY += RAW_SMOOTH * (rawAy - s.smRawY);
+  const rawSmooth = isMobile() ? RAW_SMOOTH_MOBILE : RAW_SMOOTH;
+  const rawDead = isMobile() ? RAW_DEAD_MOBILE : RAW_DEAD;
+  s.smRawX += rawSmooth * (rawAx - s.smRawX);
+  s.smRawY += rawSmooth * (rawAy - s.smRawY);
   let ax = s.smRawX, ay = s.smRawY;
-  if (Math.hypot(ax, ay) < RAW_DEAD) { ax = 0; ay = 0; }
+  if (Math.hypot(ax, ay) < rawDead) { ax = 0; ay = 0; }
 
   const lr = 0.028;
   s._amp   += (f.amplitude  - s._amp)   * lr;
@@ -397,11 +441,16 @@ export function driveSkeleton(
   const P = SKEL_PARAMS;
   const eStiff = Math.max(0.035, (P.stiffness + s._smooth * 0.06) * (1 - 0.12 * motionMag));
   const bStiff = Math.max(0.015, (P.stiffness * 0.35 + s._smooth * 0.02) * (1 - 0.08 * motionMag));
-  for (const b of s.bones) b.stiffness = b.render ? eStiff : bStiff;
+  const neckStiff = Math.max(0.088, (P.stiffness * 0.82 + s._smooth * 0.05) * (1 - 0.08 * motionMag));
+  for (const b of s.bones) {
+    const touchesNeck = b.a === "neck" || b.b === "neck" || b.a === "head" || b.b === "head";
+    b.stiffness = touchesNeck ? neckStiff : (b.render ? eStiff : bStiff);
+  }
 
   const maxLean = P.leanAmount * express;
   const leanMotion = (1 - idleRec);
-  const leanRate = 0.065 * leanMotion + (0.2 + 0.58 * idleRec) * idleRec;
+  const leanRateBase = isMobile() ? 0.16 : 0.065;
+  const leanRate = leanRateBase * leanMotion + (0.42 + 0.95 * idleRec) * idleRec;
   const targetLeanX = ax * maxLean * leanMotion;
   const targetLeanY = ay * maxLean * leanMotion;
   s.leanX += (targetLeanX - s.leanX) * leanRate;
@@ -414,7 +463,8 @@ export function driveSkeleton(
   }
   tiltTarget *= leanMotion;
   const prevTilt = s.tiltSmoothed;
-  const tiltFollow = 0.058 * leanMotion + (0.11 + 0.42 * idleRec) * idleRec;
+  const tiltFollowBase = isMobile() ? 0.12 : 0.058;
+  const tiltFollow = tiltFollowBase * leanMotion + (0.24 + 0.72 * idleRec) * idleRec;
   s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * tiltFollow;
   const dTilt = s.tiltSmoothed - prevTilt;
 
@@ -432,7 +482,7 @@ export function driveSkeleton(
   const danceMul = 1 - idleRec * 0.9;
 
   for (const j of Object.values(s.joints)) {
-    if (j.name !== active) continue;
+    if (j.name !== active || j.name === "head") continue;
 
     const phaseOff = phaseSpread * 0.35;
 
@@ -471,7 +521,7 @@ export function driveSkeleton(
 /** After physics, gently pull joints toward upright template; recenters COM. */
 function recoverJointsTowardRest(s: Skeleton, rec: number, dt: number) {
   if (rec < 0.002) return;
-  const pullLambda = 0.16 + 0.88 * rec;
+  const pullLambda = 0.38 + 1.35 * rec;
   const w = 1 - Math.exp(-pullLambda * dt);
   const mx = s.cx + s.leanX;
   const my = s.cy + s.leanY;
@@ -488,7 +538,7 @@ function recoverJointsTowardRest(s: Skeleton, rec: number, dt: number) {
 
 // ---- Rendering ----
 
-const GAP = 11 * SIZE_RATIO;
+const GAP = 7.5 * SIZE_RATIO;
 
 export type DrawRole = "self" | "peer";
 
@@ -498,15 +548,18 @@ export function drawSkeleton(
 ) {
   if (opacity <= 0.01) return;
 
+  const pal = getFigurePalette();
   const sA = role === "self" ? opacity * 0.50 : opacity * 0.48;
-  const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
-  const lw = role === "self" ? 1.0 : 0.85;
+  const strokeRgb = role === "self" ? pal.selfStroke : pal.peerStroke;
+  const lw = role === "self" ? 1.38 : 1.18;
 
-  // bones only — joints + head are transparent (no fill / stroke)
   for (const b of s.bones) {
     if (!b.render) continue;
     const ja = s.joints[b.a], jb = s.joints[b.b];
-    strokeGappedLineEndFade(ctx, ja.x, ja.y, jb.x, jb.y, GAP, lw, strokeRgb, sA);
+    const key = segmentKeySorted(b.a, b.b);
+    strokeGappedLineWithSketches(
+      ctx, ja.x, ja.y, jb.x, jb.y, GAP, lw, strokeRgb, sA, key,
+    );
   }
 }
 
@@ -544,6 +597,7 @@ export function drawPeerThreads(
   _time: number,
 ) {
   const P = SKEL_PARAMS;
+  const threadRgb = getFigurePalette().thread;
   for (const name of JOINT_NAMES) {
     const sj = self.joints[name], pj = peer.joints[name];
     if (!sj || !pj) continue;
@@ -555,7 +609,7 @@ export function drawPeerThreads(
       const alpha = Math.max(0, 1 - dist / (P.snapDist * 3)) * 0.22;
       if (alpha > 0.005) {
         strokeGappedLineEndFade(ctx, sj.x, sj.y, pj.x, pj.y, GAP,
-          0.3 + alpha * 1.5, RGB_THREAD, alpha);
+          0.3 + alpha * 1.5, threadRgb, alpha);
       }
     }
 
@@ -608,6 +662,7 @@ export function drawSkeletonMergeEffects(
   self: Skeleton, peer: Skeleton,
   pairs: SkeletonMergePair[], _time: number,
 ) {
+  const threadRgb = getFigurePalette().thread;
   for (const { joint, strength } of pairs) {
     if (strength < 0.03) continue;
     const sj = self.joints[joint], pj = peer.joints[joint];
@@ -617,7 +672,7 @@ export function drawSkeletonMergeEffects(
     const threadAlpha = strength * 0.28;
     if (threadAlpha > 0.01 && dist > GAP * 2) {
       strokeGappedLineEndFade(ctx, sj.x, sj.y, pj.x, pj.y, GAP,
-        0.4 + strength * 0.6, RGB_THREAD, threadAlpha);
+        0.4 + strength * 0.6, threadRgb, threadAlpha);
     }
 
   }
@@ -625,14 +680,18 @@ export function drawSkeletonMergeEffects(
 
 // ---- Utility ----
 
+/** Trail snapshots omit `head` so the dot leaves no trail echo. */
 export function getSkeletonPoints(s: Skeleton): Record<string, { x: number; y: number }> {
   const pts: Record<string, { x: number; y: number }> = {};
-  for (const [name, j] of Object.entries(s.joints)) pts[name] = { x: j.x, y: j.y };
+  for (const [name, j] of Object.entries(s.joints)) {
+    if (name === "head") continue;
+    pts[name] = { x: j.x, y: j.y };
+  }
   return pts;
 }
 
 export function getSkeletonBones(s: Skeleton): [string, string][] {
-  return s.bones.filter((b) => b.render).map((b) => [b.a, b.b]);
+  return s.bones.filter((b) => b.render).map((b) => [b.a, b.b] as [string, string]);
 }
 
 export { JOINT_NAMES };

@@ -1,10 +1,10 @@
 import type { Features } from "./dsp";
 import {
-  RGB_PEER_STROKE,
-  RGB_SELF_STROKE,
-  RGB_THREAD,
+  segmentKeySorted,
   strokeGappedLineEndFade,
+  strokeGappedLineWithSketches,
 } from "./lineGradient";
+import { getFigurePalette } from "./theme";
 
 // ---- Verlet particle simulation (Euclidean) ----
 
@@ -299,7 +299,7 @@ export function driveSimplex(
 
 // ---- Rendering ----
 
-const GAP = 6;
+const GAP = 4;
 
 export type DrawRole = "self" | "peer";
 
@@ -310,13 +310,17 @@ export function drawSimplex(
   if (opacity <= 0.01) return;
 
   const sA = role === "self" ? opacity * 0.52 : opacity * 0.55;
-  const strokeRgb = role === "self" ? RGB_SELF_STROKE : RGB_PEER_STROKE;
-  const lw = role === "self" ? 1.35 : 1.15;
+  const pal = getFigurePalette();
+  const strokeRgb = role === "self" ? pal.selfStroke : pal.peerStroke;
+  const lw = role === "self" ? 1.62 : 1.38;
 
   for (const c of s.constraints) {
     if (c.isDiag) continue;
     const pa = s.particles[c.a], pb = s.particles[c.b];
-    strokeGappedLineEndFade(ctx, pa.x, pa.y, pb.x, pb.y, GAP, lw, strokeRgb, sA);
+    const key = segmentKeySorted(String(c.a), String(c.b));
+    strokeGappedLineWithSketches(
+      ctx, pa.x, pa.y, pb.x, pb.y, GAP, lw, strokeRgb, sA, `e:${key}`,
+    );
   }
 }
 
@@ -389,6 +393,7 @@ export function drawMergeEffects(
   self: Simplex, peer: Simplex,
   pairs: MergePair[], _time: number,
 ) {
+  const threadRgb = getFigurePalette().thread;
   for (const { si, pi, strength } of pairs) {
     if (strength < 0.03) continue;
     const sp = self.particles[si], pp = peer.particles[pi];
@@ -400,7 +405,7 @@ export function drawMergeEffects(
       strokeGappedLineEndFade(
         ctx, sp.x, sp.y, pp.x, pp.y, GAP,
         0.5 + strength * 0.8,
-        RGB_THREAD,
+        threadRgb,
         threadAlpha,
       );
     }

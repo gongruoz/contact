@@ -8,23 +8,18 @@ import {
 import {
   setHint, showRoomCode, showConnected, showDisconnected,
   onCreateRoom, onJoinRoom, onExitRoom, setStatus, setPeerError,
-  initFigureToolbar, syncFigureToolbar, initParamSidebar,
+  isRoomCodeInputFocused, registerRoomCodeInputTrailHandlers,
 } from "./ui";
 import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
-import {
-  createSimplex, driveSimplex, drawSimplex,
-  computeMergePairs, applyFusion, drawMergeEffects,
-  type Simplex, type MergePair,
-} from "./creature";
 import {
   createSkeleton, driveSkeleton, drawSkeleton,
   computeSkeletonMergePairs, applySkeletonFusion, drawSkeletonMergeEffects,
   getSkeletonPoints, getSkeletonBones,
   applyPeerAttraction, drawPeerThreads,
-  SKEL_PARAMS,
   type Skeleton, type SkeletonMergePair,
 } from "./skeleton";
 import { TrailSystem } from "./trail";
+import { initTheme, wireThemeToggle } from "./theme";
 
 const canvas = document.getElementById("gl") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
@@ -48,11 +43,6 @@ let connected = false;
 let latestRawAx = 0;
 let latestRawAy = 0;
 
-type FigureMode = "simplex" | "skeleton";
-let mode: FigureMode = "skeleton";
-
-let selfSimplex: Simplex;
-let peerSimplex: Simplex;
 let selfSkel: Skeleton;
 let peerSkel: Skeleton;
 
@@ -72,8 +62,6 @@ function resizeCanvas() {
 function initFigures() {
   const w = window.innerWidth;
   const h = window.innerHeight;
-  selfSimplex = createSimplex(w / 2, h / 2);
-  peerSimplex = createSimplex(w / 2, h / 2);
   selfSkel = createSkeleton(w / 2, h / 2);
   peerSkel = createSkeleton(w / 2, h / 2);
   selfTrail.clear();
@@ -87,13 +75,9 @@ window.addEventListener("resize", () => {
   resizeCanvas();
   const w = window.innerWidth;
   const h = window.innerHeight;
-  selfSimplex.cx = w / 2;
-  selfSimplex.cy = h / 2;
   selfSkel.cx = w / 2;
   selfSkel.cy = h / 2;
   if (!connected) {
-    peerSimplex.cx = w / 2;
-    peerSimplex.cy = h / 2;
     peerSkel.cx = w / 2;
     peerSkel.cy = h / 2;
   }
@@ -104,10 +88,6 @@ function layoutAnchors(sim: number) {
   const h = window.innerHeight;
   const maxSep = Math.min(w, h) * 0.30;
   const half = (1 - sim) * maxSep * 0.5;
-  selfSimplex.cx = w / 2 - half;
-  selfSimplex.cy = h / 2;
-  peerSimplex.cx = w / 2 + half;
-  peerSimplex.cy = h / 2;
   selfSkel.cx = w / 2 - half;
   selfSkel.cy = h / 2;
   peerSkel.cx = w / 2 + half;
@@ -168,8 +148,10 @@ onPeerConnected(() => {
   peerRawAx = 0;
   peerRawAy = 0;
   resetSimilarity();
+  selfTrail.clear();
+  peerTrail.clear();
   showConnected();
-  setHint("black is you · gray is them · try to sync");
+  setHint("you are the black · they are the grey · try to make a contact");
   selfFeatures = extractFeatures();
   const arr = new Float32Array([
     selfFeatures.amplitude, selfFeatures.frequency,
@@ -185,31 +167,19 @@ onPeerDisconnected(() => {
   peerRawAx = 0;
   peerRawAy = 0;
   resetSimilarity();
+  selfTrail.clear();
+  peerTrail.clear();
   showDisconnected();
   if (isMobile()) {
-    if (!window.isSecureContext) setHint("use HTTPS — motion needs a secure page");
-    else if (!isSensorRunning()) setHint("create or join · then tap to dance");
-    else setHint("move your phone — make it dance");
+    if (!window.isSecureContext) setHint("HTTPS only — the page needs a sealed room to listen");
+    else if (!isSensorRunning()) setHint("make contact or find them · then tap, and we'll listen");
+    else setHint("dance, dance... otherwise we're lost");
   } else {
-    setHint("move your mouse — make it dance");
+    setHint("dance, dance... otherwise we're lost");
   }
 });
 
 let lastTime = 0;
-
-function getSimplexPoints(s: Simplex): Record<string, { x: number; y: number }> {
-  const pts: Record<string, { x: number; y: number }> = {};
-  for (let i = 0; i < s.particles.length; i++) {
-    pts[String(i)] = { x: s.particles[i].x, y: s.particles[i].y };
-  }
-  return pts;
-}
-
-function getSimplexBones(s: Simplex): [string, string][] {
-  return s.constraints
-    .filter((c) => !c.isDiag)
-    .map((c) => [String(c.a), String(c.b)]);
-}
 
 function loop(time: number) {
   const dt = lastTime ? Math.min((time - lastTime) / 1000, 0.05) : 0.016;
@@ -225,8 +195,6 @@ function loop(time: number) {
   } else {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    selfSimplex.cx = w / 2;
-    selfSimplex.cy = h / 2;
     selfSkel.cx = w / 2;
     selfSkel.cy = h / 2;
   }
@@ -235,68 +203,36 @@ function loop(time: number) {
   const w = window.innerWidth;
   const h = window.innerHeight;
 
-  if (mode === "simplex") {
-    let mergePairs: MergePair[] = [];
+  let skelMerge: SkeletonMergePair[] = [];
 
-    driveSimplex(selfSimplex, selfFeatures, latestRawAx, latestRawAy, dt);
+  driveSkeleton(selfSkel, selfFeatures, latestRawAx, latestRawAy, dt);
 
-    if (connected && peerFeatures !== null) {
-      driveSimplex(peerSimplex, peerFeatures, peerRawAx, peerRawAy, dt);
-      mergePairs = computeMergePairs(selfSimplex, peerSimplex, similarity);
-      applyFusion(selfSimplex, peerSimplex, mergePairs, dt);
-    }
+  if (connected && peerFeatures !== null) {
+    driveSkeleton(peerSkel, peerFeatures, peerRawAx, peerRawAy, dt);
+    applyPeerAttraction(selfSkel, peerSkel, dt);
+    skelMerge = computeSkeletonMergePairs(similarity);
+    applySkeletonFusion(selfSkel, peerSkel, skelMerge, dt);
+  }
 
-    selfTrail.capture(getSimplexPoints(selfSimplex), motionMag, time);
-    if (connected && peerFeatures !== null) {
-      peerTrail.capture(getSimplexPoints(peerSimplex), Math.hypot(peerRawAx, peerRawAy), time);
-    }
-
-    ctx.clearRect(0, 0, w, h);
-
-    const simplexGap = 6;
-    selfTrail.draw(ctx, getSimplexBones(selfSimplex), "self", simplexGap);
-    if (connected && peerFeatures !== null) {
-      peerTrail.draw(ctx, getSimplexBones(peerSimplex), "peer", simplexGap);
-    }
-
-    drawSimplex(ctx, selfSimplex, 1, "self");
-
-    if (connected && peerFeatures !== null) {
-      drawSimplex(ctx, peerSimplex, 1, "peer");
-      drawMergeEffects(ctx, selfSimplex, peerSimplex, mergePairs, time);
-    }
-  } else {
-    let skelMerge: SkeletonMergePair[] = [];
-
-    driveSkeleton(selfSkel, selfFeatures, latestRawAx, latestRawAy, dt);
-
-    if (connected && peerFeatures !== null) {
-      driveSkeleton(peerSkel, peerFeatures, peerRawAx, peerRawAy, dt);
-      applyPeerAttraction(selfSkel, peerSkel, dt);
-      skelMerge = computeSkeletonMergePairs(similarity);
-      applySkeletonFusion(selfSkel, peerSkel, skelMerge, dt);
-    }
-
+  const duo = connected && peerFeatures !== null;
+  const typingCode = isRoomCodeInputFocused();
+  if (!duo && !typingCode) {
     selfTrail.capture(getSkeletonPoints(selfSkel), motionMag, time);
-    if (connected && peerFeatures !== null) {
-      peerTrail.capture(getSkeletonPoints(peerSkel), Math.hypot(peerRawAx, peerRawAy), time);
-    }
+  }
 
-    ctx.clearRect(0, 0, w, h);
+  ctx.clearRect(0, 0, w, h);
 
-    const skelGap = 11;
+  const skelGap = 8;
+  if (!duo) {
     selfTrail.draw(ctx, getSkeletonBones(selfSkel), "self", skelGap);
-    if (connected && peerFeatures !== null) {
-      peerTrail.draw(ctx, getSkeletonBones(peerSkel), "peer", skelGap);
-    }
+  }
 
-    drawSkeleton(ctx, selfSkel, 1, "self");
+  drawSkeleton(ctx, selfSkel, 1, "self");
 
-    if (connected && peerFeatures !== null) {
-      drawSkeleton(ctx, peerSkel, 1, "peer");
-      drawPeerThreads(ctx, selfSkel, peerSkel, time);
-      drawSkeletonMergeEffects(ctx, selfSkel, peerSkel, skelMerge, time);
-    }
+  if (connected && peerFeatures !== null) {
+    drawSkeleton(ctx, peerSkel, 1, "peer");
+    drawPeerThreads(ctx, selfSkel, peerSkel, time);
+    drawSkeletonMergeEffects(ctx, selfSkel, peerSkel, skelMerge, time);
   }
 
   requestAnimationFrame(loop);
@@ -314,7 +250,7 @@ function warnBadDevOrigin(): void {
   const h = location.hostname;
   if (/^198\.18\./.test(h)) {
     setPeerError(
-      "wrong address for phone pairing",
+      "that address won't reach them",
       "198.18.x.x is usually a VPN/proxy virtual IP (e.g. Clash/Surge), not your Wi‑Fi. On Mac and iPhone open only the https://192.168… line from the terminal. Turn VPN off on the Mac while testing if unsure.",
       true,
     );
@@ -322,7 +258,7 @@ function warnBadDevOrigin(): void {
   }
   if (isMobile() && (h === "localhost" || h === "127.0.0.1")) {
     setPeerError(
-      "wrong address on phone",
+      "this URL is talking to the wrong room",
       "localhost on the phone is the phone itself, not your Mac. Use the https://192.168… Network URL from npm run dev.",
       true,
     );
@@ -333,9 +269,9 @@ async function init() {
   warnBadDevOrigin();
   if (isMobile()) {
     if (!window.isSecureContext) {
-      setHint("use HTTPS — motion needs a secure page");
+      setHint("HTTPS only — the page needs a sealed room to listen");
     } else {
-      setHint("create or join · then tap to dance");
+      setHint("make contact or find them · then tap, and we'll listen");
     }
     /** No `pointerdown` here: on iOS Safari it often fires before click/touchend and
      *  `DeviceMotionEvent.requestPermission()` then resolves denied with no system prompt. */
@@ -352,26 +288,26 @@ async function init() {
       started = true;
       detachGesture();
       if (!window.isSecureContext) {
-        setHint("use HTTPS — motion blocked");
+        setHint("HTTPS only — we can't hear you here");
         return;
       }
       const ok = await requestMotionPermission();
       if (!ok) {
-        setHint("motion permission denied");
+        setHint("the phone said no — we never got to listen");
         return;
       }
-      setHint("move your phone — make it dance");
+      setHint("dance, dance... otherwise we're lost");
       startSensor(onSensorSample);
     };
     window.addEventListener("touchend", startOnTap, touchendOpts);
     window.addEventListener("click", startOnTap, false);
   } else {
-    setHint("move your mouse — make it dance");
+    setHint("dance, dance... otherwise we're lost");
     startSensor(onSensorSample);
   }
 
   onCreateRoom(async () => {
-    setStatus("creating…");
+    setStatus("creating a space...");
     try {
       const code = await createRoom();
       showRoomCode(code);
@@ -383,7 +319,7 @@ async function init() {
   });
 
   onJoinRoom(async (code) => {
-    setStatus("joining…");
+    setStatus("following their signal…");
     try {
       await joinRoom(code);
     } catch (e) {
@@ -397,54 +333,13 @@ async function init() {
     destroyPeer();
   });
 
-  function applyMode(next: FigureMode) {
-    if (mode === next) return;
-    mode = next;
+  registerRoomCodeInputTrailHandlers(() => {
     selfTrail.clear();
-    peerTrail.clear();
-    syncFigureToolbar(mode, selfTrail.enabled);
-  }
-
-  function applyTrailToggle() {
-    const on = !selfTrail.enabled;
-    selfTrail.enabled = on;
-    peerTrail.enabled = on;
-    if (!on) { selfTrail.clear(); peerTrail.clear(); }
-    syncFigureToolbar(mode, on);
-  }
-
-  initFigureToolbar({
-    onShape: () => applyMode("simplex"),
-    onBody: () => applyMode("skeleton"),
-    onTrail: applyTrailToggle,
-  });
-
-  window.addEventListener("keydown", (e) => {
-    if (e.target instanceof HTMLInputElement) return;
-    if (e.key === "1") applyMode("simplex");
-    else if (e.key === "2") applyMode("skeleton"); // physique
-    else if (e.key === "t" || e.key === "T") applyTrailToggle();
-  });
-
-  initParamSidebar(
-    [
-      { key: "damping",         label: "damping",      min: 0.90, max: 0.995, step: 0.001 },
-      { key: "forceScale",      label: "force",        min: 1,    max: 15,    step: 0.5   },
-      { key: "driftScale",      label: "drift",        min: 0,    max: 1.5,   step: 0.05  },
-      { key: "breatheScale",    label: "breathe",      min: 0,    max: 2,     step: 0.05  },
-      { key: "stiffness",       label: "stiffness",    min: 0.01, max: 0.3,   step: 0.005 },
-      { key: "leanAmount",      label: "lean",         min: 0,    max: 100,   step: 1     },
-      { key: "headRadius",      label: "head size",    min: 3,    max: 24,    step: 0.5   },
-      { key: "peerAttraction",  label: "peer pull",    min: 0,    max: 0.3,   step: 0.005 },
-      { key: "snapDist",        label: "snap dist",    min: 5,    max: 60,    step: 1     },
-    ],
-    SKEL_PARAMS as unknown as Record<string, number>,
-    (key, val) => { (SKEL_PARAMS as unknown as Record<string, number>)[key] = val; },
-  );
-
-  syncFigureToolbar(mode, selfTrail.enabled);
+  }, true);
 
   requestAnimationFrame(loop);
 }
 
-init();
+initTheme();
+wireThemeToggle();
+void init();

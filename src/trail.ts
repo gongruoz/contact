@@ -1,8 +1,10 @@
 /**
  * Generic trail renderer — bone echoes only (no joint motion polylines / point “shadows”).
+ * Uses plain spindle strokes only so parallel sketch lines do not appear in the trail.
  */
 
 import { type Rgb, strokeGappedLineEndFade } from "./lineGradient";
+import { getFigurePalette } from "./theme";
 
 export interface TrailConfig {
   maxFrames: number;
@@ -12,9 +14,6 @@ export interface TrailConfig {
 }
 
 type PointSnapshot = Record<string, { x: number; y: number }>;
-
-const TRAIL_SELF: Rgb = [0, 0, 0];
-const TRAIL_PEER: Rgb = [200, 200, 204];
 
 export class TrailSystem {
   private history: PointSnapshot[] = [];
@@ -28,8 +27,8 @@ export class TrailSystem {
     this.cfg = {
       maxFrames: 40,
       captureInterval: 33,
-      fadeExponent: 2.2,
-      maxAlpha: 0.2,
+      fadeExponent: 2.55,
+      maxAlpha: 0.09,
       ...cfg,
     };
   }
@@ -68,7 +67,8 @@ export class TrailSystem {
     if (!this.enabled || this.history.length < 2) return;
 
     const total = this.history.length;
-    const rgb = role === "self" ? TRAIL_SELF : TRAIL_PEER;
+    const pal = getFigurePalette();
+    const rgb: Rgb = role === "self" ? pal.trailSelf : pal.trailPeer;
     const h = this.history;
 
     // Bone echoes: skip newest snapshot — live figure draws current pose.
@@ -78,12 +78,14 @@ export class TrailSystem {
       const layerAlpha = Math.pow(age, this.cfg.fadeExponent) * this.cfg.maxAlpha;
       if (layerAlpha < 0.003) continue;
 
-      const lw = 0.18 + age * 0.32;
+      const lw = 0.26 + age * 0.44;
 
       for (const [a, b] of bones) {
         const pa = snap[a], pb = snap[b];
         if (!pa || !pb) continue;
-        strokeGappedLineEndFade(ctx, pa.x, pa.y, pb.x, pb.y, gap, lw, rgb, layerAlpha);
+        const segLen = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+        const g = Math.min(gap, Math.max(0, segLen * 0.5 - 1.5));
+        strokeGappedLineEndFade(ctx, pa.x, pa.y, pb.x, pb.y, g, lw, rgb, layerAlpha);
       }
     }
   }

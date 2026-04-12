@@ -11,12 +11,17 @@ let cb: SensorCallback | null = null;
 
 const DM_OPTS: AddEventListenerOptions = { passive: true };
 
-/** m/s² — compress to ~[-1,1] so phone matches mouse tanh domain */
+/** m/s² — user linear acceleration → ~[-1,1] (matches mouse tanh domain) */
 const PHONE_ACCEL_REF = 2.2;
 /** rotationRate is deg/s in WebKit; scale to similar magnitude as accel */
 const RR_REF = 90;
-/** Low-pass on device samples (reduces IMU jitter; ~0.1 ≈ gentle smoothing) */
-const DEVICE_EMA = 0.11;
+/** Low-pass when only gyro is available */
+const DEVICE_EMA_GYRO = 0.14;
+/**
+ * Faster follow for gravity tilt: components are already in ~[-1,1] after normalization,
+ * so we can track phone pose without the old heavy low-pass that hid direction.
+ */
+const DEVICE_EMA_GRAVITY = 0.42;
 
 function accelTriplet(o: DeviceMotionEventAcceleration | null): [number, number, number] | null {
   if (!o) return null;
@@ -28,54 +33,92 @@ function accelTriplet(o: DeviceMotionEventAcceleration | null): [number, number,
   return [x, y, z];
 }
 
+/**
+ * Map device-frame gravity (m/s²) to screen-style axes the skeleton uses (canvas: +x right, +y down).
+ * Uses a unit vector so tilt angle maps ~linearly to lean, instead of tanh-saturating ~9.8 m/s² values.
+ */
+function gravityToScreenTilt(gx: number, gy: number, gz: number): { sx: number; sy: number; uz: number } {
+  const len = Math.hypot(gx, gy, gz);
+  if (len < 0.35) return { sx: 0, sy: 0, uz: 0 };
+  const nx = gx / len;
+  const ny = gy / len;
+  const nz = gz / len;
+
+  const landscape =
+    typeof window !== "undefined" && window.matchMedia?.("(orientation: landscape)")?.matches === true;
+
+  if (landscape) {
+    // Long edge horizontal: swap which device axis reads as screen-left-right vs in/out tilt.
+    return { sx: ny, sy: -nz, uz: -nx };
+  }
+
+  const portraitSecondary =
+    typeof screen !== "undefined" && screen.orientation?.type === "portrait-secondary";
+  if (portraitSecondary) {
+    return { sx: -nx, sy: nz, uz: -ny };
+  }
+
+  return { sx: nx, sy: -nz, uz: ny };
+}
+
 let emaAx = 0;
 let emaAy = 0;
 let emaAz = 0;
 
 function onDeviceMotion(e: DeviceMotionEvent) {
-  let ax = 0;
-  let ay = 0;
-  let az = 0;
-  let source = "";
-
   const lin = accelTriplet(e.acceleration);
-  if (lin) {
-    [ax, ay, az] = lin;
-    source = "accel";
+  const grav = accelTriplet(e.accelerationIncludingGravity);
+
+  let tx = 0;
+  let ty = 0;
+  let tz = 0;
+  let emaK = DEVICE_EMA_GYRO;
+
+  if (grav) {
+    const [gdx, gdy, gdz] = grav;
+    const { sx, sy, uz } = gravityToScreenTilt(gdx, gdy, gdz);
+    tx = sx;
+    ty = sy;
+    tz = uz;
+    emaK = DEVICE_EMA_GRAVITY;
+
+    if (lin) {
+      const [lx, ly, lz] = lin;
+      const shakeScale = 0.42;
+      tx += Math.tanh(lx / PHONE_ACCEL_REF) * shakeScale;
+      ty += Math.tanh(ly / PHONE_ACCEL_REF) * shakeScale;
+      tz += Math.tanh(lz / PHONE_ACCEL_REF) * shakeScale * 0.5;
+    }
+  } else if (lin) {
+    const [lx, ly, lz] = lin;
+    tx = Math.tanh(lx / PHONE_ACCEL_REF);
+    ty = Math.tanh(ly / PHONE_ACCEL_REF);
+    tz = Math.tanh(lz / PHONE_ACCEL_REF);
   } else {
-    const grav = accelTriplet(e.accelerationIncludingGravity);
-    if (grav) {
-      [ax, ay, az] = grav;
-      source = "gravity";
+    const rr = e.rotationRate;
+    const rb = rr?.beta;
+    const rg = rr?.gamma;
+    const ra = rr?.alpha;
+    if (
+      typeof rb === "number" &&
+      typeof rg === "number" &&
+      Number.isFinite(rb) &&
+      Number.isFinite(rg)
+    ) {
+      tx = Math.tanh(rb / RR_REF);
+      ty = Math.tanh(rg / RR_REF);
+      tz =
+        typeof ra === "number" && Number.isFinite(ra)
+          ? Math.tanh(ra / RR_REF)
+          : 0;
     } else {
-      const rr = e.rotationRate;
-      const rb = rr?.beta;
-      const rg = rr?.gamma;
-      const ra = rr?.alpha;
-      if (
-        typeof rb === "number" &&
-        typeof rg === "number" &&
-        Number.isFinite(rb) &&
-        Number.isFinite(rg)
-      ) {
-        ax = rb;
-        ay = rg;
-        az = typeof ra === "number" && Number.isFinite(ra) ? ra : 0;
-        source = "gyro";
-      } else {
-        return;
-      }
+      return;
     }
   }
 
-  const ref = source === "gyro" ? RR_REF : PHONE_ACCEL_REF;
-  const tx = Math.tanh(ax / ref);
-  const ty = Math.tanh(ay / ref);
-  const tz = Math.tanh(az / ref);
-  const k = DEVICE_EMA;
-  emaAx += k * (tx - emaAx);
-  emaAy += k * (ty - emaAy);
-  emaAz += k * (tz - emaAz);
+  emaAx += emaK * (tx - emaAx);
+  emaAy += emaK * (ty - emaAy);
+  emaAz += emaK * (tz - emaAz);
   cb?.({
     ax: emaAx,
     ay: emaAy,

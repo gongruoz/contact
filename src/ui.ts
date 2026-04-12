@@ -8,37 +8,75 @@ const roomInput = document.getElementById("room-input") as HTMLInputElement;
 const roomCodeEl = document.getElementById("room-code")!;
 const statusEl = document.getElementById("status")!;
 const statusDetailEl = document.getElementById("status-detail")!;
-const taglineEl = document.getElementById("tagline")!;
+const uiRoot = document.getElementById("ui")!;
 
 let disconnectFadeGen = 0;
+let contactChromeFadeTimer: ReturnType<typeof setTimeout> | null = null;
+
+const CONTACT_CHROME_FADE_DELAY_MS = 3400;
+
+export function isRoomCodeInputFocused(): boolean {
+  return document.activeElement === roomInput;
+}
+
+/** Clear figure trail echo while typing code (avoids dense “solid” echoes on mobile). */
+export function registerRoomCodeInputTrailHandlers(onClearSelfTrail: () => void, mobileOnly: boolean) {
+  const maybeClear = () => {
+    if (!mobileOnly || /Mobi|iPhone|iPad|Android/i.test(navigator.userAgent)) {
+      onClearSelfTrail();
+    }
+  };
+  roomInput.addEventListener("focus", maybeClear);
+}
+
+function clearContactChromeFadeTimer() {
+  if (contactChromeFadeTimer !== null) {
+    clearTimeout(contactChromeFadeTimer);
+    contactChromeFadeTimer = null;
+  }
+}
+
+export function clearContactChromeFade() {
+  clearContactChromeFadeTimer();
+  uiRoot.classList.remove("contact-chrome-faded");
+}
+
+function scheduleContactChromeFade() {
+  clearContactChromeFadeTimer();
+  contactChromeFadeTimer = window.setTimeout(() => {
+    contactChromeFadeTimer = null;
+    uiRoot.classList.add("contact-chrome-faded");
+  }, CONTACT_CHROME_FADE_DELAY_MS);
+}
 
 export function setHint(text: string) {
   hint.textContent = text;
-  hint.style.opacity = "0.5";
 }
 
 export function showRoomCode(code: string) {
+  clearContactChromeFade();
   roomCodeEl.textContent = code.trim().toUpperCase();
   roomCodeEl.classList.remove("hidden");
   btnCreate.classList.add("hidden");
   btnJoin.parentElement!.classList.add("hidden");
   connectControls.classList.remove("hidden");
   btnExit.classList.add("hidden");
-  taglineEl.classList.remove("hidden");
   clearPeerError();
-  statusEl.textContent = "waiting for them to join…";
+  statusEl.textContent = "waiting for your friend to join...";
 }
 
 export function showConnected() {
+  clearContactChromeFade();
   connectArea.classList.remove("hidden");
   connectControls.classList.add("hidden");
   btnExit.classList.remove("hidden");
-  taglineEl.classList.remove("hidden");
   clearPeerError();
   statusEl.textContent = "";
+  scheduleContactChromeFade();
 }
 
 export function showDisconnected() {
+  clearContactChromeFade();
   disconnectFadeGen += 1;
   const gen = disconnectFadeGen;
 
@@ -49,11 +87,10 @@ export function showDisconnected() {
   roomCodeEl.textContent = "";
   btnCreate.classList.remove("hidden");
   btnJoin.parentElement!.classList.remove("hidden");
-  taglineEl.classList.remove("hidden");
   clearPeerError();
 
   statusEl.classList.remove("disconnected-fade");
-  statusEl.textContent = "disconnected";
+  statusEl.textContent = "gone quiet";
   statusEl.style.opacity = "1";
 
   const armFade = () => {
@@ -89,6 +126,8 @@ export function setStatus(text: string) {
 }
 
 export function setPeerError(label: string, detail: string, showDetail: boolean) {
+  clearContactChromeFadeTimer();
+  uiRoot.classList.remove("contact-chrome-faded");
   statusEl.classList.add("peer-error");
   statusEl.textContent = label;
   statusEl.style.opacity = "1";
@@ -118,7 +157,7 @@ export function onJoinRoom(cb: (code: string) => void) {
     const code = sanitizeRoomInput();
     roomInput.value = code;
     if (code.length === 4) cb(code);
-    else setStatus("enter 4 letters or numbers");
+    else setStatus("four letters or numbers — try again");
   };
   roomInput.addEventListener("input", () => {
     const cleaned = sanitizeRoomInput();
@@ -131,93 +170,8 @@ export function onJoinRoom(cb: (code: string) => void) {
 }
 
 export function hideUI() {
+  clearContactChromeFade();
   connectArea.classList.add("hidden");
   hint.classList.add("hidden");
   btnExit.classList.add("hidden");
-}
-
-// ---- Figure toolbar (shape / body / trail) ----
-
-const btnModeShape = document.getElementById("btn-mode-shape") as HTMLButtonElement;
-const btnModeBody = document.getElementById("btn-mode-body") as HTMLButtonElement;
-const btnTrail = document.getElementById("btn-trail") as HTMLButtonElement;
-
-export type FigureToolbarMode = "simplex" | "skeleton";
-
-export function syncFigureToolbar(mode: FigureToolbarMode, trailOn: boolean) {
-  btnModeShape.classList.toggle("figure-toolbar__btn--active", mode === "simplex");
-  btnModeBody.classList.toggle("figure-toolbar__btn--active", mode === "skeleton");
-  btnTrail.classList.toggle("figure-toolbar__btn--active", trailOn);
-  btnTrail.textContent = trailOn ? "trail on" : "trail off";
-}
-
-export function initFigureToolbar(handlers: {
-  onShape: () => void;
-  onBody: () => void;
-  onTrail: () => void;
-}) {
-  btnModeShape.addEventListener("click", handlers.onShape);
-  btnModeBody.addEventListener("click", handlers.onBody);
-  btnTrail.addEventListener("click", handlers.onTrail);
-}
-
-// ---- Param sidebar ----
-
-const sidebar = document.getElementById("param-sidebar")!;
-const btnToggle = document.getElementById("btn-toggle-sidebar") as HTMLButtonElement;
-let sidebarOpen = false;
-
-btnToggle.addEventListener("click", () => {
-  sidebarOpen = !sidebarOpen;
-  sidebar.classList.toggle("open", sidebarOpen);
-  btnToggle.textContent = sidebarOpen ? "close" : "tune";
-});
-
-export interface ParamDef {
-  key: string;
-  label: string;
-  min: number;
-  max: number;
-  step: number;
-}
-
-export function initParamSidebar(
-  defs: ParamDef[],
-  values: Record<string, number>,
-  onChange: (key: string, val: number) => void,
-) {
-  const container = sidebar.querySelector(".ps-title")!;
-
-  for (const def of defs) {
-    const group = document.createElement("div");
-    group.className = "ps-group";
-
-    const label = document.createElement("div");
-    label.className = "ps-label";
-    const nameSpan = document.createElement("span");
-    nameSpan.textContent = def.label;
-    const valSpan = document.createElement("span");
-    valSpan.className = "ps-val";
-    valSpan.textContent = String(values[def.key]);
-    valSpan.id = `ps-val-${def.key}`;
-    label.appendChild(nameSpan);
-    label.appendChild(valSpan);
-
-    const input = document.createElement("input");
-    input.type = "range";
-    input.min = String(def.min);
-    input.max = String(def.max);
-    input.step = String(def.step);
-    input.value = String(values[def.key]);
-    input.addEventListener("input", () => {
-      const v = parseFloat(input.value);
-      valSpan.textContent = String(v);
-      onChange(def.key, v);
-    });
-
-    group.appendChild(label);
-    group.appendChild(input);
-    container.insertAdjacentElement("afterend", group);
-    container.parentNode!.appendChild(group);
-  }
 }

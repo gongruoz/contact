@@ -1,31 +1,109 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Contact</title>
   <style>
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --fg: #333333;
+      --fg-soft: #555555;
+      --hint-opacity: 0.5;
+      --border: rgba(0, 0, 0, 0.22);
+      --border-hover: rgba(0, 0, 0, 0.32);
+      --surface: #ffffff;
+      --surface-hover: #fafafa;
+      --placeholder: rgba(0, 0, 0, 0.35);
+      --room-code-fg: #222222;
+      --status-opacity: 0.45;
+      --peer-error: #662222;
+      --detail-opacity: 0.62;
+    }
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0c0c0c;
+      --fg: #e8e8e8;
+      --fg-soft: #b8b8b8;
+      --hint-opacity: 0.55;
+      --border: rgba(255, 255, 255, 0.22);
+      --border-hover: rgba(255, 255, 255, 0.35);
+      --surface: #141414;
+      --surface-hover: #1c1c1c;
+      --placeholder: rgba(255, 255, 255, 0.38);
+      --room-code-fg: #eeeeee;
+      --status-opacity: 0.5;
+      --peer-error: #e8a0a0;
+      --detail-opacity: 0.72;
+    }
+
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    /* Hollow ring + center dot (hotspot at middle). Fallback: crosshair. */
+    html, body, canvas#gl {
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18'%3E%3Ccircle cx='9' cy='9' r='5.25' fill='none' stroke='%231a1a1a' stroke-width='0.6' opacity='0.48'/%3E%3Ccircle cx='9' cy='9' r='1.35' fill='%231a1a1a' opacity='0.42'/%3E%3C/svg%3E") 9 9, crosshair;
+    }
+    [data-theme="dark"] html,
+    [data-theme="dark"] body,
+    [data-theme="dark"] canvas#gl {
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18'%3E%3Ccircle cx='9' cy='9' r='5.25' fill='none' stroke='%23f0f0f0' stroke-width='0.6' opacity='0.48'/%3E%3Ccircle cx='9' cy='9' r='1.35' fill='%23f0f0f0' opacity='0.42'/%3E%3C/svg%3E") 9 9, crosshair;
+    }
     html, body {
-      width: 100%; height: 100%; overflow: hidden; background: #fff;
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg);
+      color: var(--fg);
       font-family: "PingFang SC", "PingFang TC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       font-weight: 300;
       font-size: clamp(13px, 3.4vw, 15px);
       letter-spacing: 0.06em;
       -webkit-font-smoothing: antialiased;
+      transition: background-color 0.35s ease, color 0.35s ease;
     }
     canvas#gl {
       display: block; width: 100%; height: 100%;
       position: fixed; top: 0; left: 0; z-index: 0;
       touch-action: none;
     }
+    button,
+    .ui-btn {
+      cursor: pointer;
+    }
+    #room-input {
+      cursor: text;
+    }
     #ui {
       position: fixed; inset: 0; z-index: 10;
-      pointer-events: none; color: #333;
+      pointer-events: none; color: var(--fg);
     }
     #ui .interactive { pointer-events: auto; }
 
-    /* Stack hint + toolbar so they never overlap (esp. narrow phones). */
+    /* Theme: rectangular corner button (label = mode to switch to). */
+    .theme-toggle {
+      position: fixed;
+      bottom: max(0.55rem, env(safe-area-inset-bottom, 0px));
+      left: max(0.55rem, env(safe-area-inset-left, 0px));
+      z-index: 22;
+      margin: 0;
+      padding: 0.35rem 0.55rem;
+      min-width: 3.25rem;
+      font-family: inherit;
+      font-weight: 300;
+      font-size: 0.72em;
+      letter-spacing: 0.12em;
+      text-transform: lowercase;
+      color: var(--fg);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.35s ease;
+    }
+    .theme-toggle:hover {
+      background: var(--surface-hover);
+      border-color: var(--border-hover);
+    }
+
+    /* Top hint bar (narrow phones). */
     #top-bar {
       position: fixed;
       top: max(0.55rem, env(safe-area-inset-top, 0px));
@@ -39,8 +117,7 @@
       padding: 0 max(0.75rem, env(safe-area-inset-right, 0px)) 0 max(0.75rem, env(safe-area-inset-left, 0px));
       pointer-events: none;
     }
-    #top-bar #hint,
-    #top-bar #figure-toolbar {
+    #top-bar #hint {
       pointer-events: auto;
     }
 
@@ -51,9 +128,10 @@
       font-size: inherit;
       font-weight: 300;
       letter-spacing: inherit;
-      opacity: 0.5;
+      color: var(--fg-soft);
+      opacity: var(--hint-opacity);
       line-height: 1.45;
-      transition: opacity 0.8s;
+      transition: opacity 0.8s, color 0.35s ease;
     }
 
     #connect-area {
@@ -65,29 +143,6 @@
       align-items: center;
       gap: 0.5rem;
     }
-
-    #tagline {
-      font-size: inherit;
-      font-weight: 300;
-      letter-spacing: inherit;
-      color: #555;
-      text-align: center;
-      line-height: 1.5;
-      margin-bottom: 1.75rem;
-      width: 100%;
-      padding: 0 0.25rem;
-    }
-
-    #tagline .tagline-line1 {
-      display: block;
-      white-space: nowrap;
-    }
-
-    #tagline .tagline-line2 {
-      display: block;
-      margin-top: 0.35em;
-    }
-
     .ui-btn {
       appearance: none;
       -webkit-appearance: none;
@@ -95,17 +150,17 @@
       font-weight: 300;
       font-size: inherit;
       letter-spacing: inherit;
-      background: #fff;
-      color: #333;
-      border: 1px solid rgba(0,0,0,0.22);
+      background: var(--surface);
+      color: var(--fg);
+      border: 1px solid var(--border);
       border-radius: 0;
       padding: 0.55rem 0.85rem;
       cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
+      transition: background 0.15s, border-color 0.15s, color 0.35s ease;
     }
     .ui-btn:hover {
-      background: #fafafa;
-      border-color: rgba(0,0,0,0.32);
+      background: var(--surface-hover);
+      border-color: var(--border-hover);
     }
 
     #btn-create, #btn-exit {
@@ -135,24 +190,25 @@
       font-weight: 300;
       font-size: inherit;
       letter-spacing: inherit;
-      background: #fff;
-      color: #333;
-      border: 1px solid rgba(0,0,0,0.22);
+      background: var(--surface);
+      color: var(--fg);
+      border: 1px solid var(--border);
       border-radius: 0;
       padding: 0.55rem 0.85rem;
       text-align: center;
       outline: none;
+      transition: background 0.15s, border-color 0.15s, color 0.35s ease;
     }
 
     .join-row .ui-field:first-child {
       border-right: none;
     }
     .join-row .ui-field:last-child {
-      border-left: 1px solid rgba(0,0,0,0.22);
+      border-left: 1px solid var(--border);
     }
 
     .ui-field::placeholder {
-      color: rgba(0,0,0,0.35);
+      color: var(--placeholder);
       font-weight: 300;
       letter-spacing: inherit;
     }
@@ -161,15 +217,16 @@
       font-size: inherit;
       font-weight: 300;
       letter-spacing: inherit;
-      opacity: 0.8;
+      opacity: 0.88;
       user-select: all;
-      color: #222;
+      color: var(--room-code-fg);
       text-align: center;
       width: 100%;
       max-width: 18rem;
       padding: 0.55rem 0.85rem;
-      border: 1px solid rgba(0,0,0,0.22);
-      background: #fff;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      transition: background 0.35s ease, color 0.35s ease, border-color 0.35s ease;
     }
 
     #status-wrap { text-align: center; max-width: min(90vw, 22rem); }
@@ -177,177 +234,61 @@
       font-size: inherit;
       font-weight: 300;
       letter-spacing: inherit;
-      opacity: 0.45;
+      color: var(--fg-soft);
+      opacity: var(--status-opacity);
       margin-top: 0.15rem;
       line-height: 1.45;
+      transition: color 0.35s ease, opacity 0.35s ease;
     }
     #status.disconnected-fade {
       transition: opacity 2.8s ease-out;
     }
-    #status.peer-error { opacity: 0.88; color: #522; }
+    #status.peer-error {
+      opacity: 0.92;
+      color: var(--peer-error);
+    }
     #status-detail.peer-error-detail {
       font-size: inherit;
       font-weight: 300;
       letter-spacing: inherit;
-      opacity: 0.62;
+      color: var(--fg-soft);
+      opacity: var(--detail-opacity);
       margin-top: 0.25rem;
       line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
     }
+
+    /* Paired session: after a few seconds, fade all copy except step away. */
+    #ui.contact-chrome-faded #hint,
+    #ui.contact-chrome-faded #status-wrap {
+      opacity: 0 !important;
+      pointer-events: none;
+      transition: opacity 2.4s ease-out;
+    }
+    #ui.contact-chrome-faded #status-wrap:has(#status.peer-error),
+    #ui.contact-chrome-faded #status-wrap:has(#status-detail:not(.hidden)) {
+      opacity: 1 !important;
+      pointer-events: auto;
+    }
+
     .hidden { display: none !important; }
 
-    #figure-toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: center;
-      gap: 0.35rem;
-      max-width: min(96vw, 22rem);
-    }
-    #figure-toolbar .figure-toolbar__seg {
-      display: inline-flex;
-      border: 1px solid rgba(0,0,0,0.2);
-      background: #fff;
-    }
-    #figure-toolbar .figure-toolbar__btn {
-      appearance: none;
-      -webkit-appearance: none;
-      font-family: inherit;
-      font-weight: 300;
-      font-size: 0.82em;
-      letter-spacing: inherit;
-      padding: 0.38rem 0.55rem;
-      border: none;
-      background: #fff;
-      color: #666;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-    }
-    #figure-toolbar .figure-toolbar__btn:hover {
-      background: #fafafa;
-      color: #333;
-    }
-    #figure-toolbar .figure-toolbar__btn--active {
-      background: rgba(0,0,0,0.06);
-      color: #222;
-    }
-    #figure-toolbar .figure-toolbar__btn + .figure-toolbar__btn {
-      border-left: 1px solid rgba(0,0,0,0.14);
-    }
-    #figure-toolbar #btn-trail.figure-toolbar__btn {
-      border: 1px solid rgba(0,0,0,0.2);
-      min-width: 4.6rem;
-    }
-
-    /* ---- param sidebar ---- */
-    #param-sidebar {
-      position: fixed;
-      top: 0; right: 0;
-      width: 14rem;
-      height: 100vh;
-      overflow-y: auto;
-      background: rgba(255,255,255,0.92);
-      backdrop-filter: blur(6px);
-      border-left: 1px solid rgba(0,0,0,0.10);
-      padding: 5.25rem 0.75rem 1.5rem;
-      z-index: 20;
-      transform: translateX(100%);
-      transition: transform 0.25s ease;
-      pointer-events: auto;
-    }
-    #param-sidebar.open {
-      transform: translateX(0);
-    }
-    #param-sidebar .ps-title {
-      font-size: 0.78em;
-      font-weight: 400;
-      letter-spacing: 0.08em;
-      color: #555;
-      margin-bottom: 0.8rem;
-      text-transform: uppercase;
-    }
-    #param-sidebar .ps-group {
-      margin-bottom: 0.55rem;
-    }
-    #param-sidebar .ps-label {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      font-size: 0.76em;
-      color: #555;
-      margin-bottom: 0.15rem;
-    }
-    #param-sidebar .ps-val {
-      font-variant-numeric: tabular-nums;
-      color: #888;
-      min-width: 2.6em;
-      text-align: right;
-    }
-    #param-sidebar input[type="range"] {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 100%;
-      height: 3px;
-      background: rgba(0,0,0,0.12);
-      border-radius: 2px;
-      outline: none;
-      cursor: pointer;
-    }
-    #param-sidebar input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 10px; height: 10px;
-      background: #333;
-      border-radius: 50%;
-      border: none;
-      cursor: pointer;
-    }
-    #btn-toggle-sidebar {
-      appearance: none;
-      -webkit-appearance: none;
-      position: fixed;
-      bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
-      right: max(0.75rem, env(safe-area-inset-right, 0px));
-      z-index: 21;
-      font-family: inherit;
-      font-size: 0.78em;
-      font-weight: 300;
-      letter-spacing: inherit;
-      padding: 0.35rem 0.55rem;
-      border: 1px solid rgba(0,0,0,0.18);
-      background: rgba(255,255,255,0.85);
-      color: #666;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-      pointer-events: auto;
-    }
-    #btn-toggle-sidebar:hover { background: #fafafa; color: #333; }
   </style>
 </head>
 <body>
   <canvas id="gl"></canvas>
   <div id="ui">
+    <button type="button" id="theme-toggle" class="theme-toggle interactive" aria-pressed="false" aria-label="Switch to dark mode">dark</button>
     <div id="top-bar">
-      <div id="hint" class="interactive">move your mouse — make it dance</div>
-      <div id="figure-toolbar" class="interactive">
-        <div class="figure-toolbar__seg" role="group" aria-label="figure">
-          <button type="button" id="btn-mode-shape" class="figure-toolbar__btn">geometry</button>
-          <button type="button" id="btn-mode-body" class="figure-toolbar__btn figure-toolbar__btn--active">physique</button>
-        </div>
-        <button type="button" id="btn-trail" class="figure-toolbar__btn figure-toolbar__btn--active">trail on</button>
-      </div>
+      <div id="hint" class="interactive">dance, dance... otherwise we're lost</div>
     </div>
-    <div id="param-sidebar">
-      <div class="ps-title">parameters</div>
-    </div>
-    <button type="button" id="btn-toggle-sidebar" class="interactive">tune</button>
     <div id="connect-area" class="interactive">
-      <div id="tagline"><span class="tagline-line1">show how you move · feel how they move</span><span class="tagline-line2">sync up to make contact</span></div>
       <div id="connect-controls">
-        <button id="btn-create" class="ui-btn" type="button">create room</button>
+        <button id="btn-create" class="ui-btn" type="button">dance with a friend</button>
         <div class="join-row">
-          <input id="room-input" class="ui-field" maxlength="4" placeholder="code" inputmode="text" autocomplete="off" />
-          <button id="btn-join" class="ui-btn ui-field" type="button">join</button>
+          <input id="room-input" class="ui-field" maxlength="4" placeholder="their signal" inputmode="text" autocomplete="off" />
+          <button id="btn-join" class="ui-btn ui-field" type="button">find them</button>
         </div>
         <div id="room-code" class="hidden"></div>
         <div id="status-wrap">
@@ -355,7 +296,7 @@
           <div id="status-detail" class="hidden peer-error-detail"></div>
         </div>
       </div>
-      <button id="btn-exit" class="ui-btn hidden" type="button">exit</button>
+      <button id="btn-exit" class="ui-btn hidden" type="button">step away</button>
     </div>
   </div>
   <script type="module" src="/src/main.ts"></script>
