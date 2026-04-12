@@ -34,9 +34,9 @@ export function agentPeerDebug(
  * **Networks that block Google STUN / foreign TURN** need your own servers — set `VITE_ICE_SERVERS_JSON`
  * to a JSON array of `RTCIceServer` at build time (see `vite-env.d.ts` and root `env.example`).
  *
- * **If WebSocket to `0.peerjs.com` fails** (create/join errors: WebSocket / connection timeout), set
- * **`VITE_PEERJS_HOST`** (and optional `VITE_PEERJS_*`) to a **self-hosted peerjs-server** — that is
- * separate from ICE / TURN.
+ * **If WebSocket to `0.peerjs.com` fails** (errors mentioning WebSocket), or the broker is unreliable, set
+ * **`VITE_PEERJS_HOST`** (and optional `VITE_PEERJS_*`) to a **self-hosted peerjs-server** — separate from ICE / TURN.
+ * Note: tinypeer also throws `Connection timeout` when the **data channel** does not open in time (ICE path).
  */
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },

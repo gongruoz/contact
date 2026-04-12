@@ -4,10 +4,11 @@ export function describePeerError(error: unknown): { label: string; detail: stri
 
   if (m.includes("connection timeout")) {
     return {
-      label: "signaling timed out — WebSocket to PeerJS never opened",
+      label:
+        "connection timed out — signaling or WebRTC data channel did not open in time",
       detail:
         detail +
-        " · Often `0.peerjs.com` is blocked or slow. Set VITE_PEERJS_HOST to your own peerjs-server (see env.example), restart dev server.",
+        " · Tinypeer uses the same message for (A) WebSocket to the PeerJS broker not opening, and (B) signaling OK but the data channel never opens (NAT / firewall / ICE). If Network → WS shows `101` to `0.peerjs.com`, (A) is unlikely — focus on same Wi‑Fi, TURN, or `VITE_ICE_SERVERS_JSON` (see env.example). Self-host `peerjs-server` only helps when the broker WebSocket is blocked or flaky.",
     };
   }
   if (m.includes("could not connect to peer")) {
