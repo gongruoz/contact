@@ -156,6 +156,10 @@ export async function requestMotionPermission(): Promise<boolean> {
   return true;
 }
 
+export function isSensorRunning(): boolean {
+  return cb !== null;
+}
+
 export function startSensor(callback: SensorCallback) {
   cb = callback;
   emaAx = 0;

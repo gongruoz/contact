@@ -1,11 +1,14 @@
-import { startSensor, isMobile, requestMotionPermission, type SensorSample } from "./sensor";
+import { startSensor, isMobile, isSensorRunning, requestMotionPermission, type SensorSample } from "./sensor";
 import { pushSample, extractFeatures, arrayToFeatures, type Features } from "./dsp";
 import { computeSimilarity, resetSimilarity } from "./similarity";
 import {
   createRoom, joinRoom, sendFeatures, burstSendFeatures,
-  onPeerData, onPeerConnected, onPeerDisconnected,
+  onPeerData, onPeerConnected, onPeerDisconnected, destroyPeer,
 } from "./relay";
-import { setHint, showRoomCode, showConnected, showDisconnected, onCreateRoom, onJoinRoom, setStatus, setPeerError, fadeOutHint } from "./ui";
+import {
+  setHint, showRoomCode, showConnected, showDisconnected,
+  onCreateRoom, onJoinRoom, onExitRoom, setStatus, setPeerError,
+} from "./ui";
 import { describePeerError, shouldShowPeerDetailOnScreen } from "./peerErrors";
 import {
   createSimplex, driveSimplex, drawSimplex,
@@ -132,7 +135,6 @@ onPeerConnected(() => {
   resetSimilarity();
   showConnected();
   setHint("black is you · gray is them · try to sync");
-  setTimeout(() => { if (connected) fadeOutHint(); }, 4500);
   selfFeatures = extractFeatures();
   const arr = new Float32Array([
     selfFeatures.amplitude, selfFeatures.frequency,
@@ -149,6 +151,13 @@ onPeerDisconnected(() => {
   peerRawAy = 0;
   resetSimilarity();
   showDisconnected();
+  if (isMobile()) {
+    if (!window.isSecureContext) setHint("use HTTPS — motion needs a secure page");
+    else if (!isSensorRunning()) setHint("create or join · then tap to dance");
+    else setHint("move your body — make it dance");
+  } else {
+    setHint("move your mouse — make it dance");
+  }
 });
 
 let lastTime = 0;
@@ -283,6 +292,10 @@ async function init() {
       const { label, detail } = describePeerError(e);
       setPeerError(label, detail, shouldShowPeerDetailOnScreen());
     }
+  });
+
+  onExitRoom(() => {
+    destroyPeer();
   });
 
   requestAnimationFrame(loop);

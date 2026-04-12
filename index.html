@@ -91,9 +91,13 @@
       border-color: rgba(0,0,0,0.32);
     }
 
-    #btn-create {
+    #btn-create, #btn-exit {
       width: 100%;
       max-width: 18rem;
+    }
+
+    #btn-exit {
+      margin-top: 0.25rem;
     }
 
     .join-row {
@@ -180,16 +184,19 @@
     <div id="hint" class="interactive">move your mouse — make it dance</div>
     <div id="connect-area" class="interactive">
       <div id="tagline"><span class="tagline-line1">show how you move · feel how they move</span><span class="tagline-line2">sync up to make contact</span></div>
-      <button id="btn-create" class="ui-btn" type="button">create room</button>
-      <div class="join-row">
-        <input id="room-input" class="ui-field" maxlength="4" placeholder="code" inputmode="text" autocomplete="off" />
-        <button id="btn-join" class="ui-btn ui-field" type="button">join</button>
+      <div id="connect-controls">
+        <button id="btn-create" class="ui-btn" type="button">create room</button>
+        <div class="join-row">
+          <input id="room-input" class="ui-field" maxlength="4" placeholder="code" inputmode="text" autocomplete="off" />
+          <button id="btn-join" class="ui-btn ui-field" type="button">join</button>
+        </div>
+        <div id="room-code" class="hidden"></div>
+        <div id="status-wrap">
+          <div id="status"></div>
+          <div id="status-detail" class="hidden peer-error-detail"></div>
+        </div>
       </div>
-      <div id="room-code" class="hidden"></div>
-      <div id="status-wrap">
-        <div id="status"></div>
-        <div id="status-detail" class="hidden peer-error-detail"></div>
-      </div>
+      <button id="btn-exit" class="ui-btn hidden" type="button">exit</button>
     </div>
   </div>
   <script type="module" src="/src/main.ts"></script>

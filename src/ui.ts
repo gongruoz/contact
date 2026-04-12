@@ -1,7 +1,9 @@
 const hint = document.getElementById("hint")!;
 const connectArea = document.getElementById("connect-area")!;
+const connectControls = document.getElementById("connect-controls")!;
 const btnCreate = document.getElementById("btn-create") as HTMLButtonElement;
 const btnJoin = document.getElementById("btn-join") as HTMLButtonElement;
+const btnExit = document.getElementById("btn-exit") as HTMLButtonElement;
 const roomInput = document.getElementById("room-input") as HTMLInputElement;
 const roomCodeEl = document.getElementById("room-code")!;
 const statusEl = document.getElementById("status")!;
@@ -13,29 +15,36 @@ export function setHint(text: string) {
   hint.style.opacity = "0.5";
 }
 
-export function fadeOutHint() {
-  hint.style.opacity = "0";
-}
-
 export function showRoomCode(code: string) {
   roomCodeEl.textContent = code.trim().toUpperCase();
   roomCodeEl.classList.remove("hidden");
   btnCreate.classList.add("hidden");
   btnJoin.parentElement!.classList.add("hidden");
-  taglineEl.classList.add("hidden");
+  connectControls.classList.remove("hidden");
+  btnExit.classList.add("hidden");
+  taglineEl.classList.remove("hidden");
   clearPeerError();
   statusEl.textContent = "waiting for them to join…";
 }
 
 export function showConnected() {
-  connectArea.classList.add("hidden");
-  hint.textContent = "";
-  hint.style.opacity = "0.5";
+  connectArea.classList.remove("hidden");
+  connectControls.classList.add("hidden");
+  btnExit.classList.remove("hidden");
+  taglineEl.classList.remove("hidden");
   clearPeerError();
   statusEl.textContent = "";
 }
 
 export function showDisconnected() {
+  connectArea.classList.remove("hidden");
+  connectControls.classList.remove("hidden");
+  btnExit.classList.add("hidden");
+  roomCodeEl.classList.add("hidden");
+  roomCodeEl.textContent = "";
+  btnCreate.classList.remove("hidden");
+  btnJoin.parentElement!.classList.remove("hidden");
+  taglineEl.classList.remove("hidden");
   clearPeerError();
   statusEl.textContent = "disconnected";
   statusEl.style.opacity = "1";
@@ -75,6 +84,10 @@ function sanitizeRoomInput(): string {
   return roomInput.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 4);
 }
 
+export function onExitRoom(cb: () => void) {
+  btnExit.addEventListener("click", cb);
+}
+
 export function onJoinRoom(cb: (code: string) => void) {
   const submit = () => {
     const code = sanitizeRoomInput();
@@ -95,4 +108,5 @@ export function onJoinRoom(cb: (code: string) => void) {
 export function hideUI() {
   connectArea.classList.add("hidden");
   hint.classList.add("hidden");
+  btnExit.classList.add("hidden");
 }

@@ -26,13 +26,20 @@ function wsUrlForRoom(room: string): string {
   return u.toString();
 }
 
-function openWebSocket(url: string): Promise<WebSocket> {
+/** Render free tier cold start + LTE can exceed 30s; mobile needs more headroom. */
+function wsOpenTimeoutMs(): number {
+  if (typeof navigator === "undefined") return 90_000;
+  return /Mobi|iPhone|iPad|Android/i.test(navigator.userAgent) ? 120_000 : 90_000;
+}
+
+function openWebSocketOnce(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
+    const ms = wsOpenTimeoutMs();
     const to = window.setTimeout(() => {
       socket.close();
       reject(new Error("WebSocket open timeout"));
-    }, 30_000);
+    }, ms);
     socket.addEventListener(
       "open",
       () => {
@@ -50,6 +57,18 @@ function openWebSocket(url: string): Promise<WebSocket> {
       { once: true },
     );
   });
+}
+
+async function openWebSocket(url: string): Promise<WebSocket> {
+  try {
+    return await openWebSocketOnce(url);
+  } catch (e) {
+    const mobile =
+      typeof navigator !== "undefined" && /Mobi|iPhone|iPad|Android/i.test(navigator.userAgent);
+    if (!mobile) throw e;
+    await new Promise((r) => setTimeout(r, 800));
+    return openWebSocketOnce(url);
+  }
 }
 
 const ROOM_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
