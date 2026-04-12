@@ -172,7 +172,7 @@ onPeerDisconnected(() => {
   showDisconnected();
   if (isMobile()) {
     if (!window.isSecureContext) setHint("HTTPS only — the page needs a sealed room to listen");
-    else if (!isSensorRunning()) setHint("make contact or find them · then tap, and we'll listen");
+    else if (!isSensorRunning()) setHint("tap anywhere to dance");
     else setHint("dance, dance... otherwise we're lost");
   } else {
     setHint("dance, dance... otherwise we're lost");
@@ -223,7 +223,7 @@ function loop(time: number) {
   ctx.clearRect(0, 0, w, h);
 
   const skelGap = 8;
-  if (!duo) {
+  if (!duo && !typingCode) {
     selfTrail.draw(ctx, getSkeletonBones(selfSkel), "self", skelGap);
   }
 
@@ -271,7 +271,7 @@ async function init() {
     if (!window.isSecureContext) {
       setHint("HTTPS only — the page needs a sealed room to listen");
     } else {
-      setHint("make contact or find them · then tap, and we'll listen");
+      setHint("tap anywhere to dance");
     }
     /** No `pointerdown` here: on iOS Safari it often fires before click/touchend and
      *  `DeviceMotionEvent.requestPermission()` then resolves denied with no system prompt. */
@@ -335,7 +335,7 @@ async function init() {
 
   registerRoomCodeInputTrailHandlers(() => {
     selfTrail.clear();
-  }, true);
+  });
 
   requestAnimationFrame(loop);
 }

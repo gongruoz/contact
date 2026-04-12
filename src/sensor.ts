@@ -15,13 +15,20 @@ const DM_OPTS: AddEventListenerOptions = { passive: true };
 const PHONE_ACCEL_REF = 2.2;
 /** rotationRate is deg/s in WebKit; scale to similar magnitude as accel */
 const RR_REF = 90;
-/** Low-pass when only gyro is available */
-const DEVICE_EMA_GYRO = 0.14;
 /**
- * Faster follow for gravity tilt: components are already in ~[-1,1] after normalization,
- * so we can track phone pose without the old heavy low-pass that hid direction.
+ * Final smoothing — same order as mouse velocity EMA (0.085) so phone tilt + tilt-rate
+ * feels as intuitive as cursor movement.
  */
-const DEVICE_EMA_GRAVITY = 0.42;
+const UNIFIED_INPUT_EMA = 0.088;
+/** EMA step for device-motion tilt vs gyro fallback (same order as mouse velocity smoothing). */
+const DEVICE_EMA_GRAVITY = UNIFIED_INPUT_EMA;
+const DEVICE_EMA_GYRO = UNIFIED_INPUT_EMA;
+/** Blend: static tilt vs rate-of-tilt (mirrors “where you point” vs “how you flick the mouse”). */
+const PHONE_POS_WEIGHT = 0.5;
+const PHONE_VEL_WEIGHT = 0.5;
+/** Scale tilt velocity (in [-1,1] domain per second) into tanh like mouse V_REF. */
+const PHONE_VEL_REF = 6.2;
+const MOUSE_VEL_ALPHA = 0.085;
 
 function accelTriplet(o: DeviceMotionEventAcceleration | null): [number, number, number] | null {
   if (!o) return null;
@@ -66,6 +73,8 @@ let emaAy = 0;
 let emaAz = 0;
 
 function onDeviceMotion(e: DeviceMotionEvent) {
+  if (touchDragActive) return;
+
   const lin = accelTriplet(e.acceleration);
   const grav = accelTriplet(e.accelerationIncludingGravity);
 
@@ -133,38 +142,64 @@ let lastT = 0;
 let smoothVx = 0;
 let smoothVy = 0;
 
-function onMouseMove(e: MouseEvent) {
-  const now = performance.now();
+/** True after a touch has moved; same frame as desktop mousemove, and pauses devicemotion while dragging. */
+let touchDragActive = false;
+
+function feedVelocityFromClient(clientX: number, clientY: number, now: number) {
+  if (!cb) return;
   if (lastMx < 0) {
-    lastMx = e.clientX;
-    lastMy = e.clientY;
+    lastMx = clientX;
+    lastMy = clientY;
     lastT = now;
     return;
   }
   const dt = (now - lastT) / 1000;
   lastT = now;
   if (dt <= 0 || dt > 0.2) {
-    lastMx = e.clientX;
-    lastMy = e.clientY;
+    lastMx = clientX;
+    lastMy = clientY;
     return;
   }
 
-  const rawVx = (e.clientX - lastMx) / dt;
-  const rawVy = (e.clientY - lastMy) / dt;
-  lastMx = e.clientX;
-  lastMy = e.clientY;
+  const rawVx = (clientX - lastMx) / dt;
+  const rawVy = (clientY - lastMy) / dt;
+  lastMx = clientX;
+  lastMy = clientY;
 
-  const alpha = 0.085;
-  smoothVx += alpha * (rawVx - smoothVx);
-  smoothVy += alpha * (rawVy - smoothVy);
+  smoothVx += MOUSE_VEL_ALPHA * (rawVx - smoothVx);
+  smoothVy += MOUSE_VEL_ALPHA * (rawVy - smoothVy);
 
   const V_REF = 2200;
-  cb?.({
+  cb({
     ax: Math.tanh(smoothVx / V_REF),
     ay: Math.tanh(smoothVy / V_REF),
     az: 0,
     t: now,
   });
+}
+
+function onMouseMove(e: MouseEvent) {
+  feedVelocityFromClient(e.clientX, e.clientY, performance.now());
+}
+
+function onTouchStart() {
+  lastMx = -1;
+  lastMy = -1;
+}
+
+function onTouchMove(e: TouchEvent) {
+  if (e.touches.length === 0) return;
+  touchDragActive = true;
+  const t = e.touches[0]!;
+  feedVelocityFromClient(t.clientX, t.clientY, performance.now());
+}
+
+function onTouchEnd(e: TouchEvent) {
+  if (e.touches.length === 0) {
+    touchDragActive = false;
+    lastMx = -1;
+    lastMy = -1;
+  }
 }
 
 /**
@@ -208,9 +243,16 @@ export function startSensor(callback: SensorCallback) {
   emaAx = 0;
   emaAy = 0;
   emaAz = 0;
+  touchDragActive = false;
+  lastMx = -1;
+  lastMy = -1;
   const mobile = isMobile();
   if (mobile) {
     window.addEventListener("devicemotion", onDeviceMotion, DM_OPTS);
+    window.addEventListener("touchstart", onTouchStart, DM_OPTS);
+    window.addEventListener("touchmove", onTouchMove, DM_OPTS);
+    window.addEventListener("touchend", onTouchEnd, DM_OPTS);
+    window.addEventListener("touchcancel", onTouchEnd, DM_OPTS);
   } else {
     window.addEventListener("mousemove", onMouseMove);
   }
@@ -218,6 +260,11 @@ export function startSensor(callback: SensorCallback) {
 
 export function stopSensor() {
   cb = null;
+  touchDragActive = false;
   window.removeEventListener("devicemotion", onDeviceMotion, DM_OPTS);
   window.removeEventListener("mousemove", onMouseMove);
+  window.removeEventListener("touchstart", onTouchStart, DM_OPTS);
+  window.removeEventListener("touchmove", onTouchMove, DM_OPTS);
+  window.removeEventListener("touchend", onTouchEnd, DM_OPTS);
+  window.removeEventListener("touchcancel", onTouchEnd, DM_OPTS);
 }

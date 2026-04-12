@@ -1,11 +1,11 @@
 import type { Features } from "./dsp";
-import { isMobile } from "./sensor";
 import {
   segmentKeySorted,
   strokeGappedLineEndFade,
   strokeGappedLineWithSketches,
 } from "./lineGradient";
 import { getFigurePalette } from "./theme";
+import { isRoomCodeInputFocused } from "./ui";
 
 // ---- Tunable parameters (exposed to sidebar) ----
 
@@ -57,6 +57,12 @@ export interface Skeleton {
   _speed: number; _rhythm: number;
   /** Seconds of continuous low input; drives slow return to upright rest pose. */
   idleTimer: number;
+  /** High-frequency input → tremor, then template pull brings silhouette back. */
+  shakeAmp: number;
+  shakePhase: number;
+  _prevDriveRawX: number;
+  _prevDriveRawY: number;
+  _driveJerkInited: boolean;
 }
 
 export interface SkeletonMergePair {
@@ -234,6 +240,11 @@ export function createSkeleton(cx: number, cy: number): Skeleton {
     _amp: 0, _freq: 0, _axis: 0.5, _smooth: 0,
     _speed: 0, _rhythm: 0,
     idleTimer: 0,
+    shakeAmp: 0,
+    shakePhase: Math.random() * Math.PI * 2,
+    _prevDriveRawX: 0,
+    _prevDriveRawY: 0,
+    _driveJerkInited: false,
   };
   s.distances = computeDistances(s.activeJoint);
   return s;
@@ -284,9 +295,11 @@ function rotateAroundAnchor(s: Skeleton, ax: number, ay: number, dTheta: number)
 
 const ACC = 3000;
 const RAW_SMOOTH = 0.042;
-const RAW_SMOOTH_MOBILE = 0.13;
 const RAW_DEAD = 0.018;
-const RAW_DEAD_MOBILE = 0.004;
+/** |Δraw|/s above this (after sensor parity) counts as “fast wiggle” → shake + recovery. */
+const JERK_REF = 17;
+const SHAKE_DECAY_PER_S = 5.8;
+const SHAKE_INJECT = 0.28;
 
 function integrate(s: Skeleton, dt: number, impulseMul = 1) {
   const a = dt * dt * ACC * impulseMul;
@@ -415,12 +428,27 @@ export function driveSkeleton(
     idleRec = smoothstep01((s.idleTimer - IDLE_GRACE_SEC) / IDLE_REC_FULL_SEC);
   }
 
-  const rawSmooth = isMobile() ? RAW_SMOOTH_MOBILE : RAW_SMOOTH;
-  const rawDead = isMobile() ? RAW_DEAD_MOBILE : RAW_DEAD;
-  s.smRawX += rawSmooth * (rawAx - s.smRawX);
-  s.smRawY += rawSmooth * (rawAy - s.smRawY);
+  let jerkNorm = 0;
+  if (!s._driveJerkInited) {
+    s._prevDriveRawX = rawAx;
+    s._prevDriveRawY = rawAy;
+    s._driveJerkInited = true;
+  } else {
+    const ddx = rawAx - s._prevDriveRawX;
+    const ddy = rawAy - s._prevDriveRawY;
+    s._prevDriveRawX = rawAx;
+    s._prevDriveRawY = rawAy;
+    const jerk = Math.hypot(ddx, ddy) / Math.max(dt, 1e-4);
+    jerkNorm = Math.min(1, jerk / JERK_REF);
+  }
+  s.shakeAmp *= Math.exp(-dt * SHAKE_DECAY_PER_S);
+  s.shakeAmp = Math.min(1, s.shakeAmp + jerkNorm * SHAKE_INJECT);
+  s.shakePhase += dt * (26 + 48 * s.shakeAmp);
+
+  s.smRawX += RAW_SMOOTH * (rawAx - s.smRawX);
+  s.smRawY += RAW_SMOOTH * (rawAy - s.smRawY);
   let ax = s.smRawX, ay = s.smRawY;
-  if (Math.hypot(ax, ay) < rawDead) { ax = 0; ay = 0; }
+  if (Math.hypot(ax, ay) < RAW_DEAD) { ax = 0; ay = 0; }
 
   const lr = 0.028;
   s._amp   += (f.amplitude  - s._amp)   * lr;
@@ -449,10 +477,10 @@ export function driveSkeleton(
 
   const maxLean = P.leanAmount * express;
   const leanMotion = (1 - idleRec);
-  const leanRateBase = isMobile() ? 0.16 : 0.065;
-  const leanRate = leanRateBase * leanMotion + (0.42 + 0.95 * idleRec) * idleRec;
-  const targetLeanX = ax * maxLean * leanMotion;
-  const targetLeanY = ay * maxLean * leanMotion;
+  const leanRate = 0.065 * leanMotion + (0.42 + 0.95 * idleRec) * idleRec;
+  const shakeLeanMul = 1 / (1 + 1.7 * s.shakeAmp);
+  const targetLeanX = ax * maxLean * leanMotion * shakeLeanMul;
+  const targetLeanY = ay * maxLean * leanMotion * shakeLeanMul;
   s.leanX += (targetLeanX - s.leanX) * leanRate;
   s.leanY += (targetLeanY - s.leanY) * leanRate;
 
@@ -463,8 +491,7 @@ export function driveSkeleton(
   }
   tiltTarget *= leanMotion;
   const prevTilt = s.tiltSmoothed;
-  const tiltFollowBase = isMobile() ? 0.12 : 0.058;
-  const tiltFollow = tiltFollowBase * leanMotion + (0.24 + 0.72 * idleRec) * idleRec;
+  const tiltFollow = 0.058 * leanMotion + (0.24 + 0.72 * idleRec) * idleRec;
   s.tiltSmoothed += (tiltTarget - s.tiltSmoothed) * tiltFollow;
   const dTilt = s.tiltSmoothed - prevTilt;
 
@@ -508,13 +535,30 @@ export function driveSkeleton(
     }
   }
 
-  spreadPressure(s, 0.1);
+  const sk = s.shakeAmp * danceMul * 2.05;
+  if (sk > 0.006) {
+    for (const j of Object.values(s.joints)) {
+      if (j.name === "head") continue;
+      j.fx += Math.sin(s.shakePhase * 1.28 + j.driftPhase) * sk;
+      j.fy += Math.cos(s.shakePhase * 0.93 + j.driftPhase * 0.74) * sk;
+    }
+  }
+
+  spreadPressure(s, 0.11);
   boneMinLength(s);
   adaptRest(s, idleRec);
-  integrate(s, dt, 1 + motionMag * 0.42 * danceMul);
-  solve(s, 9);
+  const impulseMul = 1 + motionMag * 0.38 * danceMul;
+  integrate(s, dt, impulseMul);
+  solve(s, 10);
   rotateAroundAnchor(s, s.cx + s.leanX, s.cy + s.leanY, dTilt);
   lockCOM(s);
+  if (idleRec < 0.58) {
+    const nw =
+      (0.01 + 0.022 * (1 - Math.min(1, motionMag))) * (1 - idleRec * 0.88);
+    const nudgeBoost = 1 + 4.5 * s.shakeAmp;
+    nudgeTowardRestTemplate(s, nw * nudgeBoost);
+    lockCOM(s);
+  }
   recoverJointsTowardRest(s, idleRec, dt);
 }
 
@@ -536,6 +580,21 @@ function recoverJointsTowardRest(s: Skeleton, rec: number, dt: number) {
   lockCOM(s);
 }
 
+/** Light pull toward upright template while moving (mobile: keeps silhouette from drifting apart). */
+function nudgeTowardRestTemplate(s: Skeleton, w: number) {
+  if (w < 1e-6) return;
+  const mx = s.cx + s.leanX;
+  const my = s.cy + s.leanY;
+  for (const j of Object.values(s.joints)) {
+    const tx = mx + j.restX - COM_REST.x;
+    const ty = my + j.restY - COM_REST.y;
+    j.x += (tx - j.x) * w;
+    j.px += (tx - j.px) * w * 0.9;
+    j.y += (ty - j.y) * w;
+    j.py += (ty - j.py) * w * 0.9;
+  }
+}
+
 // ---- Rendering ----
 
 const GAP = 7.5 * SIZE_RATIO;
@@ -552,14 +611,20 @@ export function drawSkeleton(
   const sA = role === "self" ? opacity * 0.50 : opacity * 0.48;
   const strokeRgb = role === "self" ? pal.selfStroke : pal.peerStroke;
   const lw = role === "self" ? 1.38 : 1.18;
+  /** Room-code field focused: skip parallel sketch strokes (they stack to solid black on mobile). */
+  const codeTyping = role === "self" && isRoomCodeInputFocused();
 
   for (const b of s.bones) {
     if (!b.render) continue;
     const ja = s.joints[b.a], jb = s.joints[b.b];
     const key = segmentKeySorted(b.a, b.b);
-    strokeGappedLineWithSketches(
-      ctx, ja.x, ja.y, jb.x, jb.y, GAP, lw, strokeRgb, sA, key,
-    );
+    if (codeTyping) {
+      strokeGappedLineEndFade(ctx, ja.x, ja.y, jb.x, jb.y, GAP, lw, strokeRgb, sA * 0.92);
+    } else {
+      strokeGappedLineWithSketches(
+        ctx, ja.x, ja.y, jb.x, jb.y, GAP, lw, strokeRgb, sA, key,
+      );
+    }
   }
 }
 

@@ -15,18 +15,22 @@ let contactChromeFadeTimer: ReturnType<typeof setTimeout> | null = null;
 
 const CONTACT_CHROME_FADE_DELAY_MS = 3400;
 
+/** iOS sometimes lags `document.activeElement`; keep an explicit focus flag for the code field. */
+let codeFieldActive = false;
+
 export function isRoomCodeInputFocused(): boolean {
-  return document.activeElement === roomInput;
+  return codeFieldActive || document.activeElement === roomInput;
 }
 
-/** Clear figure trail echo while typing code (avoids dense “solid” echoes on mobile). */
-export function registerRoomCodeInputTrailHandlers(onClearSelfTrail: () => void, mobileOnly: boolean) {
-  const maybeClear = () => {
-    if (!mobileOnly || /Mobi|iPhone|iPad|Android/i.test(navigator.userAgent)) {
-      onClearSelfTrail();
-    }
-  };
-  roomInput.addEventListener("focus", maybeClear);
+/** Clear trail on focus; track focus so we skip trail draw / heavy sketch strokes while typing. */
+export function registerRoomCodeInputTrailHandlers(onClearSelfTrail: () => void) {
+  roomInput.addEventListener("focus", () => {
+    codeFieldActive = true;
+    onClearSelfTrail();
+  });
+  roomInput.addEventListener("blur", () => {
+    codeFieldActive = false;
+  });
 }
 
 function clearContactChromeFadeTimer() {

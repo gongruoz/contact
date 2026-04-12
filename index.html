@@ -77,11 +77,11 @@
     }
     #ui .interactive { pointer-events: auto; }
 
-    /* Theme: rectangular corner button (label = mode to switch to). */
+    /* Theme: top-right; auto = follow device, light/dark = pinned. */
     .theme-toggle {
       position: fixed;
-      bottom: max(0.55rem, env(safe-area-inset-bottom, 0px));
-      left: max(0.55rem, env(safe-area-inset-left, 0px));
+      top: max(0.55rem, env(safe-area-inset-top, 0px));
+      right: max(0.55rem, env(safe-area-inset-right, 0px));
       z-index: 22;
       margin: 0;
       padding: 0.35rem 0.55rem;
@@ -279,7 +279,7 @@
 <body>
   <canvas id="gl"></canvas>
   <div id="ui">
-    <button type="button" id="theme-toggle" class="theme-toggle interactive" aria-pressed="false" aria-label="Switch to dark mode">dark</button>
+    <button type="button" id="theme-toggle" class="theme-toggle interactive" aria-label="Theme">auto</button>
     <div id="top-bar">
       <div id="hint" class="interactive">dance, dance... otherwise we're lost</div>
     </div>
