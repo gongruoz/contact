@@ -1,13 +1,14 @@
 import { createDataPeer, type DataPeer } from "tinypeer";
 import type { Connection, PeerOptions } from "tinypeer";
 
-// #region agent log
+// #region agent log (local ingest only — never run on HTTPS production; Safari blocks mixed content)
 export function agentPeerDebug(
   location: string,
   message: string,
   data: Record<string, unknown>,
   hypothesisId: string,
 ): void {
+  if (!import.meta.env.DEV) return;
   fetch("http://127.0.0.1:7836/ingest/d6df0d79-e90b-42dd-b875-ea44422af0d2", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ee9b54" },

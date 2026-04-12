@@ -1,5 +1,5 @@
 diff --git a/node_modules/tinypeer/dist/peer-core.js b/node_modules/tinypeer/dist/peer-core.js
-index d877fe3..ee728c7 100644
+index d877fe3..29c8831 100644
 --- a/node_modules/tinypeer/dist/peer-core.js
 +++ b/node_modules/tinypeer/dist/peer-core.js
 @@ -90,6 +90,64 @@ export async function createPeerCore(options, router = {}) {
@@ -139,24 +139,82 @@ index d877fe3..ee728c7 100644
          pc.ondatachannel = event => {
              const channel = event.channel;
              channel.binaryType = 'arraybuffer';
+@@ -272,6 +353,7 @@ export async function createPeerCore(options, router = {}) {
+             }
+         };
+         setRemoteDescription(pc, sdp).then(() => {
++            signalRouter.flushPendingIceCandidates(pc);
+             if (pc.localDescription) {
+                 socket.send({
+                     type: 'ANSWER',
 diff --git a/node_modules/tinypeer/dist/signal-router.js b/node_modules/tinypeer/dist/signal-router.js
-index f15e49e..35719b1 100644
+index f15e49e..38ce13a 100644
 --- a/node_modules/tinypeer/dist/signal-router.js
 +++ b/node_modules/tinypeer/dist/signal-router.js
-@@ -13,10 +13,14 @@ export function createSignalRouter() {
+@@ -1,10 +1,44 @@
+ export function createSignalRouter() {
+     const connections = new Map();
++    /** ICE candidates may arrive before `setRemoteDescription` finishes; queue until remote SDP is set. */
++    const pendingByPc = new WeakMap();
++    function queueForPc(pc) {
++        let q = pendingByPc.get(pc);
++        if (!q) {
++            q = [];
++            pendingByPc.set(pc, q);
++        }
++        return q;
++    }
++    function flushPendingIceCandidates(pc) {
++        const q = pendingByPc.get(pc);
++        if (!q?.length)
++            return;
++        pendingByPc.delete(pc);
++        for (const candidate of q) {
++            pc.addIceCandidate(candidate).catch((err) => {
++                console.error('[tinypeer] addIceCandidate failed', err);
++            });
++        }
++    }
++    function addIceCandidateWhenReady(pc, candidate) {
++        if (pc.remoteDescription != null) {
++            pc.addIceCandidate(candidate).catch((err) => {
++                console.error('[tinypeer] addIceCandidate failed', err);
++            });
++        }
++        else {
++            queueForPc(pc).push(candidate);
++        }
++    }
+     return {
+         register: (connectionId, pc) => {
+             connections.set(connectionId, pc);
+         },
+         unregister: (connectionId) => {
++            const pc = connections.get(connectionId);
++            if (pc)
++                pendingByPc.delete(pc);
+             connections.delete(connectionId);
+         },
+         route: (message) => {
+@@ -13,12 +47,19 @@ export function createSignalRouter() {
              if (!pc)
                  return;
              if (message.type === 'ANSWER') {
 -                pc.setRemoteDescription(message.payload.sdp).catch(() => { });
-+                pc.setRemoteDescription(message.payload.sdp).catch((err) => {
++                pc.setRemoteDescription(message.payload.sdp)
++                    .then(() => {
++                    flushPendingIceCandidates(pc);
++                })
++                    .catch((err) => {
 +                    console.error('[tinypeer] setRemoteDescription failed', err);
 +                });
              }
              else if (message.type === 'CANDIDATE') {
 -                pc.addIceCandidate(message.payload.candidate).catch(() => { });
-+                pc.addIceCandidate(message.payload.candidate).catch((err) => {
-+                    console.error('[tinypeer] addIceCandidate failed', err);
-+                });
++                addIceCandidateWhenReady(pc, message.payload.candidate);
              }
          },
++        flushPendingIceCandidates,
          getPC: (connectionId) => {
+             return connections.get(connectionId);
+         },
