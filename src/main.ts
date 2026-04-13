@@ -52,6 +52,13 @@ const peerTrail = new TrailSystem();
 selfTrail.enabled = true;
 peerTrail.enabled = true;
 
+/** Figure anchor Y as a fraction of viewport height (0.5 = vertical center). Lower = higher on screen. */
+const FIGURE_ANCHOR_Y_FRAC = 0.43;
+
+function anchorFigureY(h: number): number {
+  return h * FIGURE_ANCHOR_Y_FRAC;
+}
+
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = window.innerWidth * dpr;
@@ -62,8 +69,9 @@ function resizeCanvas() {
 function initFigures() {
   const w = window.innerWidth;
   const h = window.innerHeight;
-  selfSkel = createSkeleton(w / 2, h / 2);
-  peerSkel = createSkeleton(w / 2, h / 2);
+  const ay = anchorFigureY(h);
+  selfSkel = createSkeleton(w / 2, ay);
+  peerSkel = createSkeleton(w / 2, ay);
   selfTrail.clear();
   peerTrail.clear();
 }
@@ -75,11 +83,12 @@ window.addEventListener("resize", () => {
   resizeCanvas();
   const w = window.innerWidth;
   const h = window.innerHeight;
+  const ay = anchorFigureY(h);
   selfSkel.cx = w / 2;
-  selfSkel.cy = h / 2;
+  selfSkel.cy = ay;
   if (!connected) {
     peerSkel.cx = w / 2;
-    peerSkel.cy = h / 2;
+    peerSkel.cy = ay;
   }
 });
 
@@ -88,13 +97,64 @@ function layoutAnchors(sim: number) {
   const h = window.innerHeight;
   const maxSep = Math.min(w, h) * 0.30;
   const half = (1 - sim) * maxSep * 0.5;
+  const ay = anchorFigureY(h);
   selfSkel.cx = w / 2 - half;
-  selfSkel.cy = h / 2;
+  selfSkel.cy = ay;
   peerSkel.cx = w / 2 + half;
-  peerSkel.cy = h / 2;
+  peerSkel.cy = ay;
+}
+
+const TILT_HINT_IMPULSES_NEEDED = 10;
+const TILT_HINT_MAG_MIN = 0.088;
+const TILT_HINT_DEBOUNCE_MS = 520;
+const TILT_HINT_MAX_MS = 10_000;
+
+let tiltHintImpulses = 0;
+let tiltHintLastImpulseAt = 0;
+let tiltHintAutoHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearTiltHintAutoHideTimer() {
+  if (tiltHintAutoHideTimer !== null) {
+    clearTimeout(tiltHintAutoHideTimer);
+    tiltHintAutoHideTimer = null;
+  }
+}
+
+function dismissTiltHint() {
+  const root = document.documentElement;
+  if (root.classList.contains("tilt-hint-dismissed")) return;
+  root.classList.add("tilt-hint-dismissed");
+  clearTiltHintAutoHideTimer();
+}
+
+function scheduleTiltHintAutoHide() {
+  clearTiltHintAutoHideTimer();
+  tiltHintAutoHideTimer = window.setTimeout(() => {
+    dismissTiltHint();
+  }, TILT_HINT_MAX_MS);
+}
+
+function maybeDismissTiltHintAfterTilts(s: SensorSample) {
+  if (!isMobile()) return;
+  const root = document.documentElement;
+  if (!root.classList.contains("sensor-live")) return;
+  if (root.classList.contains("tilt-hint-dismissed")) return;
+  if (!s.fromDeviceMotion) return;
+
+  const mag = Math.hypot(s.ax, s.ay);
+  if (mag < TILT_HINT_MAG_MIN) return;
+
+  const now = s.t;
+  if (now - tiltHintLastImpulseAt < TILT_HINT_DEBOUNCE_MS) return;
+  tiltHintLastImpulseAt = now;
+  tiltHintImpulses += 1;
+  if (tiltHintImpulses >= TILT_HINT_IMPULSES_NEEDED) {
+    dismissTiltHint();
+  }
 }
 
 function onSensorSample(s: SensorSample) {
+  maybeDismissTiltHintAfterTilts(s);
   pushSample(s);
   latestRawAx = s.ax;
   latestRawAy = s.ay;
@@ -196,7 +256,7 @@ function loop(time: number) {
     const w = window.innerWidth;
     const h = window.innerHeight;
     selfSkel.cx = w / 2;
-    selfSkel.cy = h / 2;
+    selfSkel.cy = anchorFigureY(h);
   }
 
   const motionMag = Math.hypot(latestRawAx, latestRawAy);
@@ -298,6 +358,8 @@ async function init() {
       }
       setHint("dance, dance... otherwise we're lost");
       startSensor(onSensorSample);
+      document.documentElement.classList.add("sensor-live");
+      scheduleTiltHintAutoHide();
     };
     window.addEventListener("touchend", startOnTap, touchendOpts);
     window.addEventListener("click", startOnTap, false);

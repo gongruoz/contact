@@ -327,22 +327,27 @@ function solve(s: Skeleton, iter: number) {
   }
 }
 
-/** Rest length softly tracks actual span so bones stretch and rebound elastically. */
+/**
+ * Rest length can follow motion (stretch / slight compress), but always drifts back toward `baseRest`
+ * so limbs do not stay collapsed after a breathe; idle strengthens the return to full extension.
+ */
 function adaptRest(s: Skeleton, idleRec: number) {
   for (const b of s.bones) {
     const ja = s.joints[b.a], jb = s.joints[b.b];
     const d = Math.hypot(jb.x - ja.x, jb.y - ja.y);
-    const rate = b.render ? 0.11 : 0.055;
-    const lo = b.baseRest * (b.render ? 0.42 : 0.32);
-    const hi = b.baseRest * (b.render ? 1.72 : 1.9);
-    let target = Math.max(lo, Math.min(hi, d));
-    if (idleRec > 0.04) {
-      target += (b.baseRest - target) * (0.42 * idleRec);
-    }
-    b.rest += (target - b.rest) * rate;
-    if (idleRec > 0.08) {
-      b.rest += (b.baseRest - b.rest) * (0.1 + 0.22 * idleRec);
-    }
+    const br = b.baseRest;
+    const rateFollow = b.render ? 0.092 : 0.046;
+    const lo = br * (b.render ? 0.78 : 0.64);
+    const hi = br * (b.render ? 1.5 : 1.72);
+    const dClamped = Math.max(lo, Math.min(hi, d));
+
+    const extensionBias = 0.55 + 0.4 * idleRec;
+    let target = dClamped * (1 - extensionBias) + br * extensionBias;
+
+    b.rest += (target - b.rest) * rateFollow;
+
+    const homeRate = (0.068 + 0.24 * idleRec) * (b.render ? 1.06 : 0.9);
+    b.rest += (br - b.rest) * homeRate;
   }
 }
 
@@ -608,9 +613,9 @@ export function drawSkeleton(
   if (opacity <= 0.01) return;
 
   const pal = getFigurePalette();
-  const sA = role === "self" ? opacity * 0.50 : opacity * 0.48;
+  const sA = role === "self" ? opacity * 0.58 : opacity * 0.54;
   const strokeRgb = role === "self" ? pal.selfStroke : pal.peerStroke;
-  const lw = role === "self" ? 1.38 : 1.18;
+  const lw = role === "self" ? 1.95 : 1.68;
   /** Room-code field focused: skip parallel sketch strokes (they stack to solid black on mobile). */
   const codeTyping = role === "self" && isRoomCodeInputFocused();
 
@@ -674,7 +679,7 @@ export function drawPeerThreads(
       const alpha = Math.max(0, 1 - dist / (P.snapDist * 3)) * 0.22;
       if (alpha > 0.005) {
         strokeGappedLineEndFade(ctx, sj.x, sj.y, pj.x, pj.y, GAP,
-          0.3 + alpha * 1.5, threadRgb, alpha);
+          0.38 + alpha * 1.65, threadRgb, alpha);
       }
     }
 
@@ -737,7 +742,7 @@ export function drawSkeletonMergeEffects(
     const threadAlpha = strength * 0.28;
     if (threadAlpha > 0.01 && dist > GAP * 2) {
       strokeGappedLineEndFade(ctx, sj.x, sj.y, pj.x, pj.y, GAP,
-        0.4 + strength * 0.6, threadRgb, threadAlpha);
+        0.5 + strength * 0.72, threadRgb, threadAlpha);
     }
 
   }

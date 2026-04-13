@@ -78,7 +78,7 @@ export class TrailSystem {
       const layerAlpha = Math.pow(age, this.cfg.fadeExponent) * this.cfg.maxAlpha;
       if (layerAlpha < 0.003) continue;
 
-      const lw = 0.26 + age * 0.44;
+      const lw = 0.31 + age * 0.52;
 
       for (const [a, b] of bones) {
         const pa = snap[a], pb = snap[b];

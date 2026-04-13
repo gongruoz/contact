@@ -77,7 +77,7 @@
     }
     #ui .interactive { pointer-events: auto; }
 
-    /* Theme: top-right; auto = follow device, light/dark = pinned. */
+    /* Theme: top-right; label = mode you switch to (follows system until first click). */
     .theme-toggle {
       position: fixed;
       top: max(0.55rem, env(safe-area-inset-top, 0px));
@@ -132,6 +132,67 @@
       opacity: var(--hint-opacity);
       line-height: 1.45;
       transition: opacity 0.8s, color 0.35s ease;
+    }
+
+    /*
+     * Touch phones: vertical copy, left edge + true vertical center.
+     * Flex centers the line’s box on the viewport midline; rotate(-90deg) around center/center
+     * keeps the sentence midpoint on that line; translateX(0.5lh - 50%) shifts so the rotated
+     * column sits on the safe-left (50% = half text width, lh ≈ thickness after rotate).
+     */
+    #mobile-tilt-hint-wrap {
+      display: none;
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: min(42vw, 12rem);
+      z-index: 11;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      padding-left: max(0.45rem, env(safe-area-inset-left, 0px));
+      min-height: 100vh;
+      min-height: 100dvh;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    #mobile-tilt-hint {
+      display: block;
+      width: fit-content;
+      max-width: none;
+      margin: 0;
+      white-space: nowrap;
+      font-family: inherit;
+      font-size: inherit;
+      font-weight: 300;
+      letter-spacing: inherit;
+      text-transform: none;
+      color: var(--fg-soft);
+      line-height: 1.45;
+      transform: translateX(calc(0.5lh - 50%)) rotate(-90deg);
+      transform-origin: center center;
+    }
+
+    @media (hover: none) and (pointer: coarse) {
+      #mobile-tilt-hint-wrap {
+        display: flex;
+      }
+      #mobile-tilt-hint {
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.85s ease, color 0.35s ease, visibility 0s linear 0.85s;
+      }
+      html.sensor-live #mobile-tilt-hint {
+        opacity: var(--hint-opacity);
+        visibility: visible;
+        transition: opacity 0.85s ease, color 0.35s ease, visibility 0s;
+      }
+      html.sensor-live.tilt-hint-dismissed #mobile-tilt-hint {
+        opacity: 0 !important;
+        visibility: hidden !important;
+        transition: opacity 1.35s ease-out, color 0.35s ease, visibility 0s linear 1.35s;
+        pointer-events: none;
+      }
     }
 
     #connect-area {
@@ -261,6 +322,7 @@
 
     /* Paired session: after a few seconds, fade all copy except step away. */
     #ui.contact-chrome-faded #hint,
+    #ui.contact-chrome-faded #mobile-tilt-hint-wrap #mobile-tilt-hint,
     #ui.contact-chrome-faded #status-wrap {
       opacity: 0 !important;
       pointer-events: none;
@@ -279,7 +341,10 @@
 <body>
   <canvas id="gl"></canvas>
   <div id="ui">
-    <button type="button" id="theme-toggle" class="theme-toggle interactive" aria-label="Theme">auto</button>
+    <div id="mobile-tilt-hint-wrap" aria-hidden="true">
+      <p id="mobile-tilt-hint">(tilt your phone to see the body dance)</p>
+    </div>
+    <button type="button" id="theme-toggle" class="theme-toggle interactive" aria-label="Switch theme">dark</button>
     <div id="top-bar">
       <div id="hint" class="interactive">dance, dance... otherwise we're lost</div>
     </div>

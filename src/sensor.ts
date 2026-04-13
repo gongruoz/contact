@@ -3,6 +3,8 @@ export interface SensorSample {
   ay: number;
   az: number;
   t: number;
+  /** True when values come from `devicemotion` (tilt); false/omit for mouse or touch drag. */
+  fromDeviceMotion?: boolean;
 }
 
 export type SensorCallback = (s: SensorSample) => void;
@@ -72,6 +74,18 @@ let emaAx = 0;
 let emaAy = 0;
 let emaAz = 0;
 
+/** Slow estimate of “holding pose” so static gravity bias is removed (upright idle ≈ desktop zero input). */
+let gravNeutralAx = 0;
+let gravNeutralAy = 0;
+let gravNeutralAz = 0;
+let gravNeutralReady = false;
+/** Per DeviceMotion sample; lower = calmer upright default, higher = faster re-centering to new hold angle. */
+const GRAV_NEUTRAL_ALPHA = 0.017;
+/** Trim tiny residual after high-pass so the figure does not drift while still. */
+const GRAV_HIGHPASS_DEADZONE = 0.034;
+/** Slight gain after removing DC so deliberate tilts still read clearly. */
+const GRAV_DELTA_GAIN = 1.07;
+
 function onDeviceMotion(e: DeviceMotionEvent) {
   if (touchDragActive) return;
 
@@ -128,11 +142,42 @@ function onDeviceMotion(e: DeviceMotionEvent) {
   emaAx += emaK * (tx - emaAx);
   emaAy += emaK * (ty - emaAy);
   emaAz += emaK * (tz - emaAz);
+
+  if (!gravNeutralReady) {
+    gravNeutralAx = emaAx;
+    gravNeutralAy = emaAy;
+    gravNeutralAz = emaAz;
+    gravNeutralReady = true;
+  } else {
+    gravNeutralAx += GRAV_NEUTRAL_ALPHA * (emaAx - gravNeutralAx);
+    gravNeutralAy += GRAV_NEUTRAL_ALPHA * (emaAy - gravNeutralAy);
+    gravNeutralAz += GRAV_NEUTRAL_ALPHA * (emaAz - gravNeutralAz);
+  }
+
+  let ox = (emaAx - gravNeutralAx) * GRAV_DELTA_GAIN;
+  let oy = (emaAy - gravNeutralAy) * GRAV_DELTA_GAIN;
+  let oz = (emaAz - gravNeutralAz) * GRAV_DELTA_GAIN;
+  const mxy = Math.hypot(ox, oy);
+  if (mxy > 0 && mxy < GRAV_HIGHPASS_DEADZONE) {
+    ox = 0;
+    oy = 0;
+  } else if (mxy >= GRAV_HIGHPASS_DEADZONE) {
+    const f = (mxy - GRAV_HIGHPASS_DEADZONE) / mxy;
+    ox *= f;
+    oy *= f;
+  }
+  if (Math.abs(oz) < GRAV_HIGHPASS_DEADZONE * 0.85) oz = 0;
+  else {
+    const s = Math.sign(oz);
+    oz = s * (Math.abs(oz) - GRAV_HIGHPASS_DEADZONE * 0.85);
+  }
+
   cb?.({
-    ax: emaAx,
-    ay: emaAy,
-    az: emaAz,
+    ax: ox,
+    ay: oy,
+    az: oz,
     t: performance.now(),
+    fromDeviceMotion: true,
   });
 }
 
@@ -175,6 +220,7 @@ function feedVelocityFromClient(clientX: number, clientY: number, now: number) {
     ay: Math.tanh(smoothVy / V_REF),
     az: 0,
     t: now,
+    fromDeviceMotion: false,
   });
 }
 
@@ -243,6 +289,7 @@ export function startSensor(callback: SensorCallback) {
   emaAx = 0;
   emaAy = 0;
   emaAz = 0;
+  gravNeutralReady = false;
   touchDragActive = false;
   lastMx = -1;
   lastMy = -1;
@@ -261,6 +308,7 @@ export function startSensor(callback: SensorCallback) {
 export function stopSensor() {
   cb = null;
   touchDragActive = false;
+  gravNeutralReady = false;
   window.removeEventListener("devicemotion", onDeviceMotion, DM_OPTS);
   window.removeEventListener("mousemove", onMouseMove);
   window.removeEventListener("touchstart", onTouchStart, DM_OPTS);

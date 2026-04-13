@@ -1,5 +1,5 @@
 /**
- * Theme: default follows `prefers-color-scheme`; user can pin light/dark via button.
+ * Theme: follows `prefers-color-scheme` until the user pins light or dark via the corner button.
  * `data-theme` on <html> drives CSS; canvas uses getFigurePalette().
  */
 
@@ -31,9 +31,10 @@ const DARK: FigurePalette = {
 
 const STORAGE_KEY = "contact-theme-pref";
 
-type ThemePreference = "system" | "light" | "dark";
+type ThemePinned = "light" | "dark";
 
-let preference: ThemePreference = "system";
+/** `null` = follow system; otherwise user-chosen appearance. */
+let pinned: ThemePinned | null = null;
 
 export function isDarkMode(): boolean {
   if (typeof document === "undefined") return false;
@@ -44,14 +45,18 @@ export function getFigurePalette(): FigurePalette {
   return isDarkMode() ? DARK : LIGHT;
 }
 
-function loadPreference(): void {
+function loadPinned(): void {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
-    if (v === "system" || v === "light" || v === "dark") preference = v;
-    else preference = "system";
+    if (v === "light" || v === "dark") {
+      pinned = v;
+      return;
+    }
+    if (v === "system") localStorage.removeItem(STORAGE_KEY);
   } catch {
-    preference = "system";
+    /* ignore */
   }
+  pinned = null;
 }
 
 function mediaPrefersDark(): boolean {
@@ -59,8 +64,8 @@ function mediaPrefersDark(): boolean {
 }
 
 function resolveDark(): boolean {
-  if (preference === "light") return false;
-  if (preference === "dark") return true;
+  if (pinned === "light") return false;
+  if (pinned === "dark") return true;
   return mediaPrefersDark();
 }
 
@@ -71,7 +76,7 @@ function applyResolvedTheme(): void {
 }
 
 function onSystemThemeChange(): void {
-  if (preference === "system") applyResolvedTheme();
+  if (pinned === null) applyResolvedTheme();
 }
 
 let mediaListenerAttached = false;
@@ -79,7 +84,7 @@ let mediaListenerAttached = false;
 export function initTheme(): void {
   if (typeof document === "undefined" || typeof window === "undefined") return;
 
-  loadPreference();
+  loadPinned();
   applyResolvedTheme();
 
   if (mediaListenerAttached) return;
@@ -91,27 +96,12 @@ function syncThemeToggleButton(): void {
   const btn = document.getElementById("theme-toggle");
   if (!btn) return;
 
-  const label: Record<ThemePreference, string> = {
-    system: "auto",
-    light: "light",
-    dark: "dark",
-  };
-  btn.textContent = label[preference];
-
-  const effective = resolveDark() ? "dark" : "light";
-  if (preference === "system") {
-    btn.setAttribute(
-      "aria-label",
-      `Appearance follows device (${effective}). Click to pin light mode.`,
-    );
-  } else if (preference === "light") {
-    btn.setAttribute("aria-label", "Light mode pinned. Click for dark mode.");
-  } else {
-    btn.setAttribute(
-      "aria-label",
-      "Dark mode pinned. Click to follow device appearance.",
-    );
-  }
+  const dark = resolveDark();
+  btn.textContent = dark ? "light" : "dark";
+  btn.setAttribute(
+    "aria-label",
+    dark ? "Switch to light mode" : "Switch to dark mode",
+  );
 }
 
 let themeToggleWired = false;
@@ -124,11 +114,9 @@ export function wireThemeToggle(): void {
 
   syncThemeToggleButton();
   btn.addEventListener("click", () => {
-    if (preference === "system") preference = "light";
-    else if (preference === "light") preference = "dark";
-    else preference = "system";
+    pinned = resolveDark() ? "light" : "dark";
     try {
-      localStorage.setItem(STORAGE_KEY, preference);
+      localStorage.setItem(STORAGE_KEY, pinned);
     } catch {
       /* ignore */
     }
